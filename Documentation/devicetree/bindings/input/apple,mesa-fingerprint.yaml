@@ -37,6 +37,12 @@ properties:
     maxItems: 1
     description: Power line to the sensor, asserted to power it up.
 
+  apple,smc:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      The System Management Controller that switches the rails named by
+      apple,smc-power-key and apple,smc-power-rails.
+
   apple,smc-power-key:
     $ref: /schemas/types.yaml#/definitions/string
     description:
@@ -70,6 +76,7 @@ oneOf:
   - required:
       - enable-gpios
   - required:
+      - apple,smc
       - apple,smc-power-key
       - apple,smc-power-rails
 
@@ -92,5 +99,28 @@ examples:
             spi-cs-hold-delay-ns = <20>;
             enable-gpios = <&pinctrl_ap 108 GPIO_ACTIVE_HIGH>;
             firmware-name = "apple/mesacal-j313.bin";
+        };
+    };
+
+  - |
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    spi {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        fingerprint@0 {
+            compatible = "apple,mesa-fingerprint";
+            reg = <0>;
+            spi-max-frequency = <8000000>;
+            spi-cpol;
+            spi-cs-setup-delay-ns = <20>;
+            spi-cs-hold-delay-ns = <20>;
+            interrupt-parent = <&pinctrl_ap>;
+            interrupts = <135 IRQ_TYPE_EDGE_RISING>;
+            apple,smc = <&smc>;
+            apple,smc-power-key = "pcLD";
+            apple,smc-power-rails = <0x01010000 0x01020000>;
+            firmware-name = "apple/mesacal-j700.bin";
         };
     };
