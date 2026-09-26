@@ -138,7 +138,7 @@ impl Store {
     /// be skipped.
     pub(crate) fn open_owner(writes_enabled: bool, start_sector: u64) -> Result<Store> {
         if start_sector != 0 {
-            return Self::open_based(OWNER_PATH, writes_enabled, start_sector << 9);
+            return Self::open_based_ext(OWNER_PATH, true, writes_enabled, start_sector << 9);
         }
         Self::open_located(writes_enabled)
     }
