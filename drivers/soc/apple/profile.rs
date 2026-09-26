@@ -155,17 +155,13 @@ const T8103: PlatformProfile = PlatformProfile {
     },
     dart_range_required: false,
     firmware_region: c"sepfw",
-    // macOS 13.5's AppleKeyStore::identity_create (0xfffffe000994b2d8):
-    // version 2, type 0x400000, parent -1 (it accepts only -1 or <= -10).
+    // Strict enclave: the type goes in the third word; the first word is 0.
     keybag_create: KeybagCreate {
-        variant: 2,
-        bag_type: 0x40_0000,
-        arg: -1,
+        variant: 0,
+        bag_type: 0x20000,
+        arg: 0,
     },
-    // The j293 and j313 ADTs both carry `/defaults` `cpx-encryption-mode = 2`.
-    key_store: KeyStore::Sepos13 {
-        cpx_encryption_mode: 2,
-    },
+    key_store: KeyStore::Variant5,
 };
 
 const T6020: PlatformProfile = PlatformProfile {
@@ -186,13 +182,16 @@ const T6020: PlatformProfile = PlatformProfile {
     },
     dart_range_required: true,
     firmware_region: c"sepfw",
-    // Proven encoding: the lenient enclave takes the variant in the first word.
+    // Sepos13 enclave encoding: version 2, type 0x400000, parent -1.
     keybag_create: KeybagCreate {
-        variant: 5,
-        bag_type: 0,
+        variant: 2,
+        bag_type: 0x40_0000,
         arg: -1,
     },
-    key_store: KeyStore::Variant5,
+    // The j414 ADT carries `/defaults` `cpx-encryption-mode = 2`.
+    key_store: KeyStore::Sepos13 {
+        cpx_encryption_mode: 2,
+    },
 };
 
 static_assert!(T8103.shmem_capacity == 0x30000);
