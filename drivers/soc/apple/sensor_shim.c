@@ -143,9 +143,11 @@ static int sep_acquire_smc_power(struct spi_device *spi)
 		return -EINVAL;
 	}
 
-	smc_np = of_find_compatible_node(NULL, NULL, "apple,smc");
-	if (!smc_np)
-		return -EPROBE_DEFER;
+	smc_np = of_parse_phandle(np, "apple,smc", 0);
+	if (!smc_np) {
+		dev_warn(&spi->dev, "sep sensor: apple,smc-power-key needs an apple,smc phandle\n");
+		return -EINVAL;
+	}
 	smc_pdev = of_find_device_by_node(smc_np);
 	of_node_put(smc_np);
 	if (!smc_pdev)
