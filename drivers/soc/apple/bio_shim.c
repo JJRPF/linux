@@ -7,6 +7,7 @@
 #include <linux/ktime.h>
 #include <linux/miscdevice.h>
 #include <linux/poll.h>
+#include <linux/random.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/types.h>
@@ -200,4 +201,9 @@ __u64 sep_bio_monotonic_ns(void)
 __u64 sep_bio_boottime_ns(void)
 {
 	return ktime_get_boottime_ns();
+}
+
+void sep_bio_get_random_bytes(void *buf, size_t nbytes)
+{
+	get_random_bytes(buf, nbytes);
 }

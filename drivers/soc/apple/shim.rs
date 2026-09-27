@@ -194,6 +194,7 @@ extern "C" {
     fn sep_bio_capable_admin() -> c_int;
     fn sep_bio_monotonic_ns() -> u64;
     fn sep_bio_boottime_ns() -> u64;
+    fn sep_bio_get_random_bytes(buf: *mut c_void, nbytes: usize);
 }
 
 pub(crate) fn capable_admin() -> bool {
@@ -211,6 +212,11 @@ pub(crate) fn monotonic_ns() -> u64 {
 pub(crate) fn boottime_ns() -> u64 {
     // SAFETY: no preconditions.
     unsafe { sep_bio_boottime_ns() }
+}
+
+pub(crate) fn get_random_bytes(buf: &mut [u8]) {
+    // SAFETY: `buf` is a valid slice for the duration of the call.
+    unsafe { sep_bio_get_random_bytes(buf.as_mut_ptr().cast(), buf.len()) }
 }
 
 /// The registered character device.

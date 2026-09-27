@@ -151,6 +151,7 @@ void sep_bio_wake(void *dev);
 int sep_bio_capable_admin(void);
 __u64 sep_bio_monotonic_ns(void);
 __u64 sep_bio_boottime_ns(void);
+void sep_bio_get_random_bytes(void *buf, size_t nbytes);
 
 /* -- trusted_shim.c ---------------------------------------------------- */
 
