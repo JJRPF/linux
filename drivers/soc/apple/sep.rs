@@ -32,12 +32,14 @@ mod store;
 mod transfer;
 mod trusted;
 mod xarm;
+mod xart_apfs;
 mod xart_store;
 
 use kernel::{
     bindings,
     device,
     dma,
+    dma::Device as _,
     driver,
     new_mutex,
     of,
@@ -76,6 +78,7 @@ use kernel::{
 
 const SETTLE_MS: time::Msecs = 200;
 const FIRST_RESPONSE_MS: time::Msecs = 3000;
+const RNG_SURVEY_ATTEMPTS: u32 = 5;
 
 const SETTLE_WORK_ID: u64 = 1;
 
@@ -85,7 +88,10 @@ const VERIFY_WORK_ID: u64 = 3;
 static_assert!(VERIFY_WORK_ID != ENROL_WORK_ID && VERIFY_WORK_ID != SETTLE_WORK_ID);
 static_assert!(VERIFY_WORK_ID != 0);
 
-const EXCHANGE_TIMEOUT_MS: time::Msecs = 15000;
+// J700 traces show the key-store endpoint arriving around 43 s after boot,
+// well after the first infrastructure endpoints. The wait exits promptly on
+// other machines when their key store becomes ready.
+const EXCHANGE_TIMEOUT_MS: time::Msecs = 90000;
 
 const PHASE_ATTACH: u32 = 0;
 const PHASE_EXCHANGE: u32 = 1;
@@ -328,6 +334,7 @@ impl LoadAnswer {
     }
 }
 
+#[derive(Debug)]
 enum RestoreOutcome {
     Restored,
     AlreadyActive,
@@ -608,8 +615,6 @@ struct SepData {
     #[pin]
     scrd_wq: CondVar,
 
-    sensor_present: Atomic<bool>,
-
     #[pin]
     bio_session: Mutex<bio::Session>,
 
@@ -637,9 +642,13 @@ struct SepData {
     #[pin]
     fv_volumes: Mutex<KVec<fv::VolumeMap>>,
 
+    enrol_frames_accepted: Atomic<u32>,
+
     rng_shutdown: Atomic<bool>,
 
     rng_failures: Atomic<u64>,
+
+    rng_survey_attempts: Atomic<u32>,
 
     rx: rxring::RxRing,
 
@@ -722,7 +731,7 @@ impl SepData {
                 let base = store.base();
                 dev_info!(
                     dev,
-                    "xART: in-kernel raw-extent owner (base {:#x}); {} slots, {} live records, max revision {}, {} malformed, {} duplicate, {} repaired; writes {}\n",
+                    "xART: APFS-resolved .gl extent (base {:#x}); {} slots, {} live records, max revision {}, {} malformed, {} duplicate, {} repaired; writes {}\n",
                     base,
                     slots,
                     records,
@@ -796,7 +805,6 @@ impl SepData {
                 sbio_rx <- new_mutex!(transfer::Reassembly::new()),
                 sbio_wq <- new_condvar!("SepData::sbio_wq"),
                 sbio_ready: Atomic::new(false),
-                sensor_present: Atomic::new(false),
                 bio_session <- new_mutex!(bio::Session::new()),
                 bio_index <- new_mutex!(bio_index),
                 bio_dev <- new_mutex!(None),
@@ -806,8 +814,10 @@ impl SepData {
                 rng <- new_mutex!(None),
                 machine_refkey <- new_mutex!(None),
                 fv_volumes <- new_mutex!(KVec::new()),
+                enrol_frames_accepted: Atomic::new(0),
                 rng_shutdown: Atomic::new(false),
                 rng_failures: Atomic::new(0),
+                rng_survey_attempts: Atomic::new(0),
                 rx: rxring::RxRing::new(),
                 rx_count: Atomic::new(0),
                 settle_mark: Atomic::new(0),
@@ -1088,40 +1098,42 @@ impl SepData {
     }
 
     fn control_survey(&self) {
-
         for param in [0x00u8, 0x01, 0xff] {
             let _ = self.control_request(&proto::op_nop(param));
         }
 
         let _ = self.control_request(&proto::op_security_mode());
 
-        let mut words = [0u32; 4];
-        let mut got = 0;
-        for w in words.iter_mut() {
-            match self.get_entropy_word() {
-                Ok(v) => {
-                    *w = v;
-                    got += 1;
-                }
-                Err(_) => {
-                    break;
-                }
-            }
-        }
-
-        if got == words.len() {
-            match self.register_hwrng() {
-                Ok(()) => {},
-                Err(e) => dev_err!(self.dev, "hwrng: registration failed: {:?}\n", e),
-            }
-        } else {
-            dev_err!(
-                self.dev,
-                "hwrng: not registering, the source did not answer during the survey\n"
-            );
-        }
-
         let _state = self.control.lock();
+    }
+
+    fn survey_hwrng(&self) -> Result<()> {
+        // A working control endpoint must answer four consecutive draws before
+        // it is exposed to the kernel RNG core. Early attach can beat the SEP
+        // endpoint exchange, so this runs only after that exchange settles.
+        for _ in 0..4 {
+            let _ = self.get_entropy_word()?;
+        }
+        self.register_hwrng()
+    }
+
+    fn tick_ready(this: &Arc<SepData>) {
+        if this.rng.lock().is_some() {
+            return;
+        }
+        let attempt = this.rng_survey_attempts.load(Relaxed) + 1;
+        if attempt > RNG_SURVEY_ATTEMPTS {
+            return;
+        }
+        this.rng_survey_attempts.store(attempt, Relaxed);
+        match this.survey_hwrng() {
+            Ok(()) => dev_info!(this.dev, "hwrng: registered after ready-phase survey (attempt {})\n", attempt),
+            Err(e) if attempt < RNG_SURVEY_ATTEMPTS => {
+                dev_warn!(this.dev, "hwrng: survey attempt {} failed ({:?}); retrying\n", attempt, e);
+                Self::arm_settle(this);
+            }
+            Err(e) => dev_err!(this.dev, "hwrng: survey failed after {} attempts ({:?})\n", attempt, e),
+        }
     }
 
 
@@ -1304,6 +1316,17 @@ impl SepData {
             self.fail_xarm(req.tag);
             return;
         };
+
+        if *module_parameters::xarm_trace.value() != 0 {
+            dev_info!(
+                self.dev,
+                "xarm: op 0x{:02x} request_len {} reply_status 0x{:02x} reply_len {}\n",
+                req.opcode,
+                req.length,
+                done.reply.status,
+                done.reply.length
+            );
+        }
 
         if done.reply_bytes > 0 {
             if self.ool_write(&self.ool_xarm, 0, &staging[..done.reply_bytes]).is_err() {
@@ -1546,6 +1569,7 @@ impl SepData {
         user: crate::sbio::UserId,
     ) -> Option<[u8; crate::scrd::SCRD_ACM_HANDLE_LEN]> {
         if !self.scrd_ready() {
+            dev_err!(self.dev, "enrol: SCRD endpoint is not ready\n");
             return None;
         }
 
@@ -1557,54 +1581,74 @@ impl SepData {
             (material.special, Secret(copy))
         };
 
-        let (status, _) = self.scrd_command(&crate::scrd::scrd_initialize())?;
+        let Some((status, _)) = self.scrd_command(&crate::scrd::scrd_initialize()) else {
+            dev_err!(self.dev, "enrol: SCRD initialize did not answer\n");
+            return None;
+        };
         if status != 0 {
+            dev_err!(self.dev, "enrol: SCRD initialize refused (status {})\n", status);
             return None;
         }
 
-        let (status, out) = self.scrd_command(&crate::scrd::scrd_context_create_tracked(user.value()))?;
+        let Some((status, out)) = self.scrd_command(&crate::scrd::scrd_context_create_tracked(user.value())) else {
+            dev_err!(self.dev, "enrol: SCRD context create did not answer\n");
+            return None;
+        };
         if status != 0 || out.len() < crate::scrd::SCRD_ACM_HANDLE_LEN {
+            dev_err!(self.dev, "enrol: SCRD context create failed (status {}, {} reply bytes)\n", status, out.len());
             return None;
         }
         let mut acm_handle = [0u8; crate::scrd::SCRD_ACM_HANDLE_LEN];
         acm_handle.copy_from_slice(&out[..crate::scrd::SCRD_ACM_HANDLE_LEN]);
 
-        let (status, _) = self.scrd_command(&crate::scrd::scrd_context_externalize(&acm_handle))?;
+        let Some((status, _)) = self.scrd_command(&crate::scrd::scrd_context_externalize(&acm_handle)) else {
+            dev_err!(self.dev, "enrol: SCRD context externalize did not answer\n");
+            return None;
+        };
         if status != 0 {
+            dev_err!(self.dev, "enrol: SCRD context externalize refused (status {})\n", status);
             return None;
         }
 
-        let out = self.sks_send(self.sks_req_verify_secret(special, &secret, &acm_handle))?;
+        let Some(out) = self.sks_send(self.sks_req_verify_secret(special, &secret, &acm_handle)) else {
+            dev_err!(self.dev, "enrol: SKS verify-secret did not answer\n");
+            return None;
+        };
         if out.reply.status != 0 {
+            dev_err!(self.dev, "enrol: SKS verify-secret refused (status {})\n", out.reply.status);
             return None;
         }
 
-        let (status, out) = self.scrd_command(&crate::scrd::scrd_verify_touchid_enrollment(&acm_handle))?;
+        let Some((status, out)) = self.scrd_command(&crate::scrd::scrd_verify_touchid_enrollment(&acm_handle)) else {
+            dev_err!(self.dev, "enrol: SCRD Touch ID policy check did not answer\n");
+            return None;
+        };
         let satisfied = out.len() >= 4
             && u32::from_le_bytes([out[0], out[1], out[2], out[3]]) != 0;
         if status != 0 || !satisfied {
+            dev_err!(self.dev, "enrol: SCRD Touch ID policy rejected (status {}, satisfied {})\n", status, satisfied);
             return None;
         }
 
         Some(acm_handle)
     }
 
-    fn establish_scrd_match_context(&self, user: crate::sbio::UserId) {
+    fn establish_scrd_match_context(&self, user: crate::sbio::UserId) -> bool {
         if !self.scrd_ready() {
-            return;
+            return false;
         }
         let Some(du) = crate::sks::DesignateUser::new(SBIO_PROBE_USER_ID) else {
-            return;
+            return false;
         };
         let special = du.special_handle();
         let stored = match keybag::read(keybag::Slot::Identity) {
             Ok(keybag::State::Present(s)) => s,
             _ => {
-                return;
+                return false;
             }
         };
 
-        let _ = (|| -> Option<[u8; crate::scrd::SCRD_ACM_HANDLE_LEN]> {
+        let established = (|| -> Option<[u8; crate::scrd::SCRD_ACM_HANDLE_LEN]> {
             let (status, _) = self.scrd_command(&crate::scrd::scrd_initialize())?;
             if status != 0 {
                 return None;
@@ -1626,7 +1670,9 @@ impl SepData {
             }
             self.scrd_command(&crate::scrd::scrd_verify_touchid_enrollment(&acm_handle))?;
             Some(acm_handle)
-        })();
+        })().is_some();
+        dev_info!(self.dev, "scrd: cold-match credential established {}\n", established);
+        established
     }
 
 
@@ -1725,7 +1771,8 @@ impl SepData {
         match this.phase.load(Relaxed) {
             PHASE_ATTACH => Self::tick_attach(this),
             PHASE_EXCHANGE => Self::tick_exchange(this),
-            _ => {}
+            PHASE_READY => Self::tick_ready(this),
+            _ => {},
         }
     }
 
@@ -1802,8 +1849,9 @@ impl SepData {
             }
         }
 
-        this.phase.store(PHASE_READY, Relaxed);
         this.run_bringup();
+        this.phase.store(PHASE_READY, Relaxed);
+        Self::arm_settle(this);
     }
 
     fn endpoint_present(&self, id: u8) -> bool {
@@ -2096,6 +2144,13 @@ impl platform::Driver for SepDriver {
         }
         let sep_node = dt::DtNode::of_device(dev).ok_or(ENODEV)?;
 
+        // J700's SEP DART window starts above 4 GiB. Leave the proven masks
+        // on older platforms unchanged for the M1/M2 regression run.
+        if profile::detect()?.wide_dma_mask {
+            // SAFETY: probe has not allocated DMA memory for this device yet.
+            unsafe { pdev.dma_set_mask_and_coherent(dma::DmaMask::new::<42>())? };
+        }
+
         if dt::registration_already_sent(&sep_node) {
             dev_err!(
                 dev,
@@ -2172,11 +2227,11 @@ module! {
     params: {
         xart_writes: u8 {
             default: 0,
-            description: "Allow writes to the validated shared xART store",
+            description: "Opt in to shared xART writes only if APFS proves a single unsnapshotted .gl extent",
         },
         xart_start_sector: u64 {
             default: 0,
-            description: "Explicit 512-byte start sector of the xART gigalocker extent within the iBoot system container. Zero (default) locates the gigalocker automatically in the container by its root records; a non-zero value overrides the search. Either way the driver opens the container directly",
+            description: "Expected 512-byte start sector of the APFS .gl extent in the iBoot container. Zero accepts the APFS result; nonzero must match it and cannot override it",
         },
         provision_keybag: u8 {
             default: 0,
@@ -2189,6 +2244,18 @@ module! {
         os_uuid_lo: u64 {
             default: 0,
             description: "Low 64 bits of an explicit xART OS UUID",
+        },
+        xarm_trace: u8 {
+            default: 0,
+            description: "Opt-in xART opcode/status trace without payloads or key material",
+        },
+        probe_owner_export: u8 {
+            default: 0,
+            description: "Opt-in J414s diagnostic: with zero live identities, select the system context and try saving the missing owner Catacomb",
+        },
+        j414s_persistent_enrol: u8 {
+            default: 0,
+            description: "Opt-in J414s enrollment test: export owner from the fresh context, then save user before master at completion",
         },
     },
 }
