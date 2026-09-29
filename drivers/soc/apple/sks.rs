@@ -335,7 +335,8 @@ impl SepData {
     /// store, before any other request: `0x4d`, whose capability word sets the
     /// IPC header version to `min(word, 2)` (0x…6dc0-6dd0), then `set_env`
     /// (0x…6e64). Returns false if the key store must stay closed this boot.
-    /// The T6020 path sends nothing here.
+    /// Active on profiles configured with `KeyStore::Sepos13` (e.g. T6020).
+    /// Platforms on `KeyStore::Variant5` (T8103) bypass endpoint initialization.
     pub(crate) fn sks_init_endpoint(&self) -> bool {
         let profile::KeyStore::Sepos13 {
             cpx_encryption_mode,

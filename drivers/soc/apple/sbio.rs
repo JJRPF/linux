@@ -573,6 +573,12 @@ impl SepData {
     }
 
     fn save_all_components(&self, user: crate::sbio::UserId) -> bool {
+        let Some(reply) = self.read_component_states() else {
+            dev_err!(self.dev, "enrol: cannot read component states before saving\n");
+            return false;
+        };
+        let states = crate::sbio::ComponentStates::new(&reply);
+        let mut all_ok = true;
         for (who, kind, what) in [
             (
                 crate::sbio::CatacombUser::MASTER,
@@ -590,35 +596,39 @@ impl SepData {
                 c"user catacomb",
             ),
         ] {
-            let Some(reply) = self.read_component_states() else {
-                dev_err!(self.dev, "enrol: cannot read component state before saving {}\n", what);
-                return false;
-            };
-            let states = crate::sbio::ComponentStates::new(&reply);
             let Some(state) = states.state_for(who.value()) else {
                 dev_err!(self.dev, "enrol: {} is absent at enrollment completion\n", what);
-                return false;
+                all_ok = false;
+                continue;
             };
             dev_info!(self.dev, "enrol: completed {} state 0x{:x}\n", what, state);
-            if state & crate::sbio::COMPONENT_STATE_ACTIVE == 0 {
-                dev_err!(self.dev, "enrol: {} is not active at enrollment completion\n", what);
-                return false;
+            if who.value() == user.value() {
+                if state & crate::sbio::COMPONENT_STATE_ACTIVE == 0 {
+                    dev_err!(self.dev, "enrol: completed user catacomb is not active\n");
+                    all_ok = false;
+                    continue;
+                }
+                if state & crate::sbio::COMPONENT_STATE_SAVE_PENDING == 0 {
+                    dev_err!(self.dev, "enrol: completed user catacomb is not marked for saving\n");
+                    all_ok = false;
+                    continue;
+                }
+            } else if state & crate::sbio::COMPONENT_STATE_ACTIVE == 0 {
+                dev_info!(self.dev, "enrol: {} is not active; skipping save\n", what);
+                continue;
             }
             if state & crate::sbio::COMPONENT_STATE_SAVE_PENDING != 0 {
                 if !self.save_catacomb(who, kind, what) {
                     dev_err!(self.dev, "enrol: save_catacomb failed for {}\n", what);
-                    return false;
+                    all_ok = false;
                 }
-            } else if who.value() == user.value() {
-                dev_err!(self.dev, "enrol: completed user catacomb is not marked for saving\n");
-                return false;
             }
         }
         if !self.save_lockout() {
             dev_err!(self.dev, "enrol: lockout persistence failed\n");
-            return false;
+            all_ok = false;
         }
-        true
+        all_ok
     }
 
     fn save_after_match(&self, user: crate::sbio::UserId) -> bool {
@@ -2174,7 +2184,13 @@ impl SepData {
 
         if handled.delete_identity.is_some() || !handled.delete_identities.is_empty() {
             if let Some(user) = crate::sbio::UserId::new(SBIO_PROBE_USER_ID) {
-                let _ = self.save_all_components(user);
+                if !self.save_all_components(user) {
+                    dev_err!(
+                        self.dev,
+                        "delete_identity: catacomb save failed after deletion; returning EIO to prevent desynchronization\n"
+                    );
+                    return Err(EIO);
+                }
             }
         }
 

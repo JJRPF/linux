@@ -87,31 +87,28 @@ pub(crate) struct SensorProfile {
 }
 
 /// Identity keybag `CREATE_KEYBAG` field encoding. The first word is the
-/// codec's struct version: the 13.5 enclave (T8103) takes versions 0-2 only
-/// and macOS creates an identity with version 2, while the T6020 enclave takes
-/// variant 5. Kept per-SoC so the T8103 path is correct without disturbing the
-/// proven T6020 encoding (hardware-verified for enrol, match, and reboot).
+/// codec's struct version: the Sepos13 enclave (T6020) takes version 2 with
+/// bag type 0x400000 and parent -1, while the strict T8103 enclave takes
+/// version 0 with bag type 0x20000. Kept per-SoC so both paths match their
+/// respective sepOS requirements without disturbing each other.
 pub(crate) struct KeybagCreate {
     /// First word: struct version (request variant), echoed back in the reply.
     pub(crate) variant: u32,
-    /// Third word: bag type. Identity is `0x400000` on 13.5; `0` on T6020,
-    /// which distinguishes the bag by the variant word instead.
+    /// Third word: bag type. Identity is `0x400000` on Sepos13; `0x20000` on T8103.
     pub(crate) bag_type: u32,
     /// Fourth word: create argument / parent handle.
     pub(crate) arg: i32,
 }
 
-/// Which key-store protocol the enclave speaks. It follows the sepOS the
-/// firmware hands the SEP, not the SoC alone: the T8103 stub boots macOS 13.5
-/// (22G74)'s sepOS, whose request shapes are those of the 13.5
-/// `AppleSEPKeyStore`; the T6020 sepOS is newer.
+/// Which key-store protocol the enclave speaks.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyStore {
-    /// macOS 13.5's key store. Before any other request the endpoint is
-    /// initialised as `AppleKeyStore::init_sep_endpoint` does it: `0x4d`, then
-    /// `set_env` carrying the ADT's `/defaults` `cpx-encryption-mode`.
+    /// macOS 13.5's key store protocol (active on T6020). Before any other request
+    /// the endpoint is initialised as `AppleKeyStore::init_sep_endpoint` does it:
+    /// `0x4d` capability negotiation, then `set_env` carrying the ADT's `/defaults`
+    /// `cpx-encryption-mode`.
     Sepos13 { cpx_encryption_mode: u32 },
-    /// The hardware-verified T6020 encoding (variant-5 create).
+    /// Standard key-store protocol without 0x4d endpoint initialization (active on T8103).
     Variant5,
 }
 
