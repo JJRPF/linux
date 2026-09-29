@@ -105,7 +105,9 @@ config APPLE_SEP_FV_INTERFACE
 config APPLE_SEP
 	tristate "Apple SEP (Secure Enclave Processor)"
 	depends on ARCH_APPLE
+	depends on PM
 	depends on RUST
+	depends on RUST_APPLE_MAILBOX
 	depends on HW_RANDOM
 	depends on TRUSTED_KEYS
 	depends on CRYPTO
@@ -116,6 +118,7 @@ config APPLE_SEP
 	select CRYPTO_GCM
 	select CRYPTO_ECDH
 	select APPLE_SEP_FV_INTERFACE
+	select RUST_FW_LOADER_ABSTRACTIONS
 	help
 	  Driver for the Apple SEP (Secure Enclave Processor) on Apple silicon.
 	  It drives the Touch ID fingerprint sensor over a /dev/sep-bio character
@@ -126,10 +129,9 @@ config APPLE_SEP
 	  the iBoot system container, locating its .gl extent through read-only,
 	  checksum-validated APFS metadata. It validates the complete store and
 	  both root records before registering with SEP.
-	  Raw APFS xART writes are disabled by default. An explicit xart_writes
-	  opt-in is accepted only when the driver validates narrow physical
-	  extent ownership invariants; this does not prove all macOS-compatible
-	  update behavior. Keep it off until the target machine has been checked.
+	  Shared xART writes and identity-keybag creation default on. A write
+	  still runs only when APFS proves a single unsnapshotted .gl extent.
+	  The first boot creates the Linux identity keybag when it is absent.
 
 	  Say Y here if you have an Apple silicon Mac.
 

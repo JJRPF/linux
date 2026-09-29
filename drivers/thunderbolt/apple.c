@@ -207,7 +207,7 @@ struct apple_cio {
 #define APPLE_DPIN_CTRL_INACTIVE	BIT(0)
 #define APPLE_DPIN_ACK_INACTIVE		BIT(0)
 
-static bool dp_display;
+static bool dp_display = true;
 module_param(dp_display, bool, 0444);
 MODULE_PARM_DESC(dp_display, "Drive displays behind Thunderbolt DP tunnels (experimental, t8103)");
 
