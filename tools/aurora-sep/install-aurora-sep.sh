@@ -30,7 +30,7 @@ set -euo pipefail
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
 VERSION=7.1.12.aurora2-11.5
-TAG=sep-7.1.12.aurora2-11.9
+TAG=sep-7.1.12.aurora2-11.11
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -72,7 +72,10 @@ newer_release() {
   # whether set -e acts on that inside a command substitution is subtle enough
   # that it should not be left to chance in a script that runs as root.
   local seen=""
-  seen=$(curl -fsSL --max-time 8 "$RELEASES_API" 2>/dev/null |
+  # Ask for the release marked Latest. Listing all releases is not ordered by
+  # version: they share a commit, so GitHub falls back to comparing tag names
+  # as text, and 11.9 sorts above 11.10.
+  seen=$(curl -fsSL --max-time 8 "$RELEASES_API/latest" 2>/dev/null |
     grep -o '"tag_name"[[:space:]]*:[[:space:]]*"sep-[^"]*"' |
     head -1 | sed 's/.*"\(sep-[^"]*\)"$/\1/') || true
   [[ -n $seen && $seen != "$TAG" ]] && echo "$seen"
@@ -229,10 +232,15 @@ m1n1_update() {
   [[ -f /etc/default/update-m1n1 && ! -f $STATE/update-m1n1.default.saved ]] &&
     $sudo cp /etc/default/update-m1n1 "$STATE/update-m1n1.default.saved"
   $sudo tee /etc/default/update-m1n1 >/dev/null <<'EOF'
-# aurora-sep: build m1n1's stage 2 from linux-aurora's device trees, which carry
-# the Touch ID sensor node, not from whichever kernel has the highest version.
+# aurora-sep: build m1n1's stage 2 from the device trees the installed
+# linux-aurora package owns, which carry the Touch ID sensor node.
+#
+# Not from a module directory whose pkgbase says linux-aurora: right after an
+# upgrade the running kernel's modules are restored unowned but still carry that
+# pkgbase, so both kernels' DTBs would be bundled. m1n1 keeps the last matching
+# DTB, and the glob sorts 11.10 before 11.9, so the stale one can win.
 # (update-m1n1 runs under set -e, so this assignment must always succeed.)
-DTBS=$(for d in /usr/lib/modules/*/; do if [ "$(cat "${d}pkgbase" 2>/dev/null)" = linux-aurora ]; then echo "${d}"dtbs/*.dtb; fi; done; true)
+DTBS=$(pacman -Qlq linux-aurora 2>/dev/null | grep '/dtbs/[^/]*\.dtb$'; true)
 EOF
   for target in /boot/m1n1/boot.bin /boot/efi/m1n1/boot.bin; do
     [[ -f $target && ! -f $STATE/boot.bin.saved ]] && $sudo cp "$target" "$STATE/boot.bin.saved"
@@ -517,7 +525,7 @@ SAFETY, NON-NEGOTIABLE
    every install and prints either "<tag> is the current release" or a warning
    naming the newer one. To check without installing:
 
-     curl -fsSL https://api.github.com/repos/iconidentify/aurora-linux/releases \
+     curl -fsSL https://api.github.com/repos/iconidentify/aurora-linux/releases/latest \
        | grep -m1 '"tag_name"' 
 
    Always fetch the script from the "latest" URL rather than a tag you were
