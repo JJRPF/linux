@@ -2245,10 +2245,18 @@ impl kernel::InPlaceModule for SepModule {
             // changeset; the cold-boot target describes them statically (its DART
             // is enabled before probe), so no changeset runs there.
             _dt: {
-                if let Ok(p) = profile::detect() {
-                    if matches!(p.bootstrap, profile::Bootstrap::WarmRegister) {
-                        dt::enable_sep_and_dart()?;
+                match profile::detect() {
+                    Ok(p) => {
+                        if matches!(p.bootstrap, profile::Bootstrap::WarmRegister) {
+                            dt::enable_sep_and_dart()?;
+                        }
                     }
+                    // Without this the module loads, probes nothing and logs
+                    // nothing on an unlisted SoC, which is indistinguishable
+                    // from a driver that started correctly.
+                    Err(_) => pr_info!(
+                        "apple_sep: no platform profile for this SoC; the SEP stays disabled\n"
+                    ),
                 }
             },
 

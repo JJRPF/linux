@@ -325,6 +325,14 @@ pub(crate) fn detect() -> Result<&'static PlatformProfile> {
     if machine_has(b"apple,t6020") {
         return Ok(&T6020);
     }
+    // t6020.dtsi is defined as a cut-down t6021: it includes t6021.dtsi and
+    // disables the parts the smaller die lacks. Both pull in t602x-die0.dtsi,
+    // so the SEP, its DART and the SPI controller sit at the same addresses
+    // with the same interrupts on either part, and the T6020 constants apply
+    // to the M2 Max unchanged.
+    if machine_has(b"apple,t6021") {
+        return Ok(&T6020);
+    }
     if machine_has(b"apple,t6000") {
         return Ok(&T6000);
     }
