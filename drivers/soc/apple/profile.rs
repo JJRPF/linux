@@ -87,14 +87,12 @@ pub(crate) struct SensorProfile {
 }
 
 /// Identity keybag `CREATE_KEYBAG` field encoding. The first word is the
-/// codec's struct version: the Sepos13 enclave (T6020) takes version 2 with
-/// bag type 0x400000 and parent -1, while the strict T8103 enclave takes
-/// version 0 with bag type 0x20000. Kept per-SoC so both paths match their
-/// respective sepOS requirements without disturbing each other.
+/// codec's struct version: the Sepos13 enclave (T8103 and T6020) takes version 2
+/// with bag type 0x400000 and parent -1.
 pub(crate) struct KeybagCreate {
     /// First word: struct version (request variant), echoed back in the reply.
     pub(crate) variant: u32,
-    /// Third word: bag type. Identity is `0x400000` on Sepos13; `0x20000` on T8103.
+    /// Third word: bag type. Identity is `0x400000` on Sepos13.
     pub(crate) bag_type: u32,
     /// Fourth word: create argument / parent handle.
     pub(crate) arg: i32,
@@ -103,12 +101,12 @@ pub(crate) struct KeybagCreate {
 /// Which key-store protocol the enclave speaks.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyStore {
-    /// macOS 13.5's key store protocol (active on T6020). Before any other request
+    /// macOS 13.5+ key store protocol (active on T8103 and T6020). Before any other request
     /// the endpoint is initialised as `AppleKeyStore::init_sep_endpoint` does it:
     /// `0x4d` capability negotiation, then `set_env` carrying the ADT's `/defaults`
     /// `cpx-encryption-mode`.
     Sepos13 { cpx_encryption_mode: u32 },
-    /// Standard key-store protocol without 0x4d endpoint initialization (active on T8103).
+    /// Standard key-store protocol without 0x4d endpoint initialization.
     Variant5,
 }
 
@@ -152,13 +150,17 @@ const T8103: PlatformProfile = PlatformProfile {
     },
     dart_range_required: false,
     firmware_region: c"sepfw",
-    // Strict enclave: the type goes in the third word; the first word is 0.
+    // macOS 13.5's AppleKeyStore::identity_create (0xfffffe000994b2d8):
+    // version 2, type 0x400000, parent -1 (it accepts only -1 or <= -10).
     keybag_create: KeybagCreate {
-        variant: 0,
-        bag_type: 0x20000,
-        arg: 0,
+        variant: 2,
+        bag_type: 0x40_0000,
+        arg: -1,
     },
-    key_store: KeyStore::Variant5,
+    // The j293 and j313 ADTs both carry `/defaults` `cpx-encryption-mode = 2`.
+    key_store: KeyStore::Sepos13 {
+        cpx_encryption_mode: 2,
+    },
 };
 
 const T6020: PlatformProfile = PlatformProfile {

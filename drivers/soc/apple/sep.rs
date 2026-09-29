@@ -1243,13 +1243,9 @@ impl SepData {
             return;
         }
 
-        if let Some(uuid) = dt::preboot_uuid() {
-            self.xarm.lock().os_uuid = Some(uuid);
-            dev_info!(self.dev, "xART: using /chosen/apfs-preboot-uuid\n");
-            return;
-        }
-
-        // HostPersisted fallback for platforms without /chosen/apfs-preboot-uuid
+        // Check if an existing host UUID was already provisioned on disk in earlier
+        // bringup/enrollment sessions. If present, preserve it so existing xART records
+        // and enrolled biometric templates remain valid across boots.
         const OS_UUID_PATH: &CStr = c"/var/lib/aurora-sep-os-uuid.bin";
         let mut uuid = [0u8; 16];
         let mut loaded = false;
@@ -1257,6 +1253,24 @@ impl SepData {
             if file.read_exact(0, &mut uuid).is_ok() && !uuid.iter().all(|&b| b == 0) {
                 loaded = true;
             }
+        }
+
+        if loaded {
+            self.xarm.lock().os_uuid = Some(uuid);
+            dev_info!(
+                self.dev,
+                "xART: using existing host-persisted OS UUID {:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}\n",
+                uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7],
+                uuid[8], uuid[9], uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]
+            );
+            return;
+        }
+
+        // On fresh setups or initramfs, use the preboot UUID forwarded from iBoot/ADT by m1n1.
+        if let Some(uuid) = dt::preboot_uuid() {
+            self.xarm.lock().os_uuid = Some(uuid);
+            dev_info!(self.dev, "xART: using /chosen/apfs-preboot-uuid\n");
+            return;
         }
 
         if !loaded {
