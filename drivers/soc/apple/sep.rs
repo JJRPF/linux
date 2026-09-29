@@ -1270,6 +1270,11 @@ impl SepData {
         if let Some(uuid) = dt::preboot_uuid() {
             self.xarm.lock().os_uuid = Some(uuid);
             dev_info!(self.dev, "xART: using /chosen/apfs-preboot-uuid\n");
+            // Persist the preboot UUID to disk so host storage remains consistent across boots
+            if let Ok(file) = shim::StoreFile::open_trunc(OS_UUID_PATH) {
+                let _ = file.write_all(0, &uuid);
+                let _ = file.sync();
+            }
             return;
         }
 

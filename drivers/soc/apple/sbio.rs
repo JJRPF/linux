@@ -2178,9 +2178,6 @@ impl SepData {
                 delete_all_err = delete_all_err.or(Some(e));
             }
         }
-        if let Some(e) = delete_all_err {
-            return Err(e);
-        }
 
         if handled.delete_identity.is_some() || !handled.delete_identities.is_empty() {
             if let Some(user) = crate::sbio::UserId::new(SBIO_PROBE_USER_ID) {
@@ -2189,9 +2186,15 @@ impl SepData {
                         self.dev,
                         "delete_identity: catacomb save failed after deletion; returning EIO to prevent desynchronization\n"
                     );
-                    return Err(EIO);
+                    if delete_all_err.is_none() {
+                        delete_all_err = Some(EIO);
+                    }
                 }
             }
+        }
+
+        if let Some(e) = delete_all_err {
+            return Err(e);
         }
 
         if handled.wake {
