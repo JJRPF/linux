@@ -5,11 +5,12 @@
 #   ... | bash -s -- --read-only      install, but never let the driver write to the enclave
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
 #
-# Kernel: iconidentify/aurora-linux custom/sep (1e25fc8fee0a), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (e4c91eb8eaf0), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
 # decoder (#45), the M2 Max (t6021) profile and the consolidated Touch ID
 # series (aurora-silicon/linux#69: matching after a reboot on every profile,
-# M1 Pro J314s, j293 SPI mode). It replaces linux-asahi (or linux-aurora) as a pacman package,
+# M1 Pro J314s, j293 SPI mode, a scan in progress ended before sleep).
+# It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
 #
@@ -32,8 +33,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.14
-TAG=sep-7.1.12.aurora2-11.14
+VERSION=7.1.12.aurora2-11.15
+TAG=sep-7.1.12.aurora2-11.15
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -41,8 +42,8 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 2d66e0703c433ad6e72113cdbab442e12784347b065eaf64d6659e0b80108d58"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst a8619221fe11cd91acba03c04c87c56964b620cb0cdbcf59d9e4c55bccff579c"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 9a8d96c0e7270e0d2da24a1fa46f8762bbc4e76eb204d0619a5b904e5ab5a76a"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 81602dcf6c9961cb3f5b1b7c87cb97bdf8b84ead63a7b9d406df2c0b06ac1752"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
   "aurora-touchid-20260930-1-any.pkg.tar.zst 2dc5bd93e923b551d201db469d094bfec6f8270de26ef3f0eda81137bf77f2f6"
   "m1n1-aurora-1.6.1.aurora2-2-aarch64.pkg.tar.zst 99f53b6a300d994965ccd9b0baf089122a4a3963180830544680b34ef34eaab6"
@@ -662,6 +663,10 @@ SAFETY, NON-NEGOTIABLE
    Report which codecs you exercised and at what resolution.
 
 8. ONE SUSPEND/RESUME CYCLE AT THE END
+   Ask the owner to lock the screen and, while it waits for a fingerprint,
+   close the lid. Then open it and unlock with the finger. Report whether
+   the Mac woke and whether the finger unlocked it, and quote:
+     sudo dmesg | grep -E 'Touch ID: ending|still running|PM: suspend'
    Re-check /dev/sep-bio, the display and the dock after resume.
 
    Report "not tested" honestly rather than guessing, for any of the above.
