@@ -32,7 +32,7 @@ set -euo pipefail
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
 VERSION=7.1.12.aurora2-11.6
-TAG=sep-7.1.12.aurora2-11.12
+TAG=sep-7.1.12.aurora2-11.13
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -43,7 +43,7 @@ PACKAGES=(
   "linux-aurora-$VERSION-aarch64.pkg.tar.zst 8a7fb83f371bd257985515f9d4e5ac8479ed6c549775172ae6ebfd558d9e3ef7"
   "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 994f34f6413b43a5905eda8559a420f67fd4c34797ccc7784eb9afcb2793914e"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
-  "aurora-touchid-20260929-1-any.pkg.tar.zst c3c84488330a55f25f3a2f241714d0c4b09716be363082737543507337773f5b"
+  "aurora-touchid-20260930-1-any.pkg.tar.zst 2dc5bd93e923b551d201db469d094bfec6f8270de26ef3f0eda81137bf77f2f6"
   "m1n1-aurora-1.6.1.aurora2-2-aarch64.pkg.tar.zst 99f53b6a300d994965ccd9b0baf089122a4a3963180830544680b34ef34eaab6"
 )
 PINNED="linux-aurora linux-aurora-headers libfprint m1n1-aurora"
@@ -312,12 +312,23 @@ grub_update() {
 }
 
 calibration() {
-  local node name out
-  for node in /proc/device-tree/soc*/spi*/*/ /proc/device-tree/*/spi*/*/; do
-    [[ -f $node/compatible ]] && grep -qa mesa "$node/compatible" || continue
-    [[ -f $node/firmware-name ]] && name=$(tr -d '\0' <"$node/firmware-name")
-    break
-  done
+  local node name="" out board dtb
+  # The driver reads firmware-name from the device tree it boots, which is the
+  # aurora one installed above. When this runs from linux-asahi, the running
+  # tree has no sensor node at all, so ask the installed aurora DTB first.
+  board=$(tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null | sed -n '1s/^apple,//p')
+  if [[ -n $board ]]; then
+    dtb=$(pacman -Qlq linux-aurora 2>/dev/null | grep -m1 "/dtbs/t[0-9]*-$board\.dtb$" || true)
+    [[ -n $dtb && -f $dtb ]] &&
+      name=$(grep -aoE -m1 'apple/mesacal-[A-Za-z0-9_-]+\.bin' "$dtb" | head -1 || true)
+  fi
+  if [[ -z $name ]]; then
+    for node in /proc/device-tree/soc*/spi*/*/ /proc/device-tree/*/spi*/*/; do
+      [[ -f $node/compatible ]] && grep -qa mesa "$node/compatible" || continue
+      [[ -f $node/firmware-name ]] && name=$(tr -d '\0' <"$node/firmware-name")
+      break
+    done
+  fi
   name=${name:-apple/mesa_calibration.bin}
   out=/usr/lib/firmware/$name
   if [[ -s $out ]]; then
