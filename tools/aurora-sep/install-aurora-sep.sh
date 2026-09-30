@@ -1,13 +1,14 @@
 #!/bin/bash
 # Install the aurora custom/sep kernel and Touch ID on an Omarchy Mac.
 #
-#   curl -fsSL https://github.com/iconidentify/aurora-linux/releases/download/sep-7.1.12.aurora2-11.2/install-aurora-sep.sh | bash
+#   curl -fsSL https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh | bash
 #   ... | bash -s -- --read-only      install, but never let the driver write to the enclave
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
 #
-# Kernel: iconidentify/aurora-linux custom/sep (a70264532f60), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (17cba00e43b9), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
-# decoder (#45) and M2 Max (t6021) profile selection. It replaces linux-asahi (or linux-aurora) as a pacman package,
+# decoder (#45), the M2 Max (t6021) profile and the fix for matching after a
+# reboot on M2 Pro/Max (#61). It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
 #
@@ -15,12 +16,13 @@
 # service and this Mac's own sensor calibration. After the reboot, run
 # aurora-touchid-setup to enrol a finger and use it for sudo and the lock screen.
 #
-# m1n1: m1n1-aurora tracks aurora-silicon/m1n1 main with no local patches.
+# m1n1: m1n1-aurora builds aurora-silicon/m1n1 main (97e2de3d4fec) plus one
+# patch, the usb4-N-pcie-adapter alias fallback (aurora-silicon/m1n1#4).
 # On M2 and later the platform hands Linux an already-running Secure
 # Enclave, and the driver attaches to it with one registration that can only be
 # sent once per boot. Stock m1n1 asks the enclave for randomness on the way up,
-# spending that attempt before Linux sees it. m1n1-aurora adds a guard that
-# skips the request when the enclave is already running. On M1, where the
+# spending that attempt before Linux sees it. aurora-silicon/m1n1 has a guard
+# that skips the request when the enclave is already running. On M1, where the
 # enclave is still in its boot ROM, the guard never fires.
 #
 # Testing this build? Run with --agent-prompt for the test plan and the format
@@ -29,8 +31,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.5
-TAG=sep-7.1.12.aurora2-11.11
+VERSION=7.1.12.aurora2-11.6
+TAG=sep-7.1.12.aurora2-11.12
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -38,8 +40,8 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst de032a60fd3300f8e69a960e11108f9f4f2eac4757beb31836e43c25c1e51f73"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst d1e614d975b7a5495c3317bb48b6cc22286bfe6338c2ba05fc91484ce263fbe7"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 8a7fb83f371bd257985515f9d4e5ac8479ed6c549775172ae6ebfd558d9e3ef7"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 994f34f6413b43a5905eda8559a420f67fd4c34797ccc7784eb9afcb2793914e"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
   "aurora-touchid-20260929-1-any.pkg.tar.zst c3c84488330a55f25f3a2f241714d0c4b09716be363082737543507337773f5b"
   "m1n1-aurora-1.6.1.aurora2-2-aarch64.pkg.tar.zst 99f53b6a300d994965ccd9b0baf089122a4a3963180830544680b34ef34eaab6"
@@ -591,6 +593,13 @@ SAFETY, NON-NEGOTIABLE
      aurora-touchid-setup
    Enrol one finger, then:
      fprintd-verify
+   Then REBOOT and run fprintd-verify again without re-enrolling. Matching
+   right after enrolment and matching after a reboot are different paths (the
+   second restores the enrolment from disk), so report them separately.
+   If a verify fails, the driver logs the step that ended it:
+     sudo dmesg | grep -E 'verify:|scrd:|Touch ID|catacomb|matching unavailable'
+   fprintd's "verify-unknown-error" is not a result on its own; quote those
+   lines with it.
    Then check the consumers the owner actually cares about: sudo, polkit, and
    the lock screen. Report each as pass/fail separately - partial success here
    is the normal outcome and is worth knowing precisely.
@@ -654,6 +663,7 @@ HOW TO REPORT
     **Firmware:** asahi,os-fw-version = X, asahi,system-fw-version = Y
     **Build:** <release tag>, linux-aurora <ver>, m1n1-aurora <ver>
     **m1n1 guard:** fired / did not fire / stock m1n1 still installed
+    **Touch ID:** enrol <pass/fail>, verify <pass/fail>, verify after reboot <pass/fail>
     **Thunderbolt:** <dock model, or "no dock"> on port <1 / 2 / both>
 
     ## What worked
