@@ -5,13 +5,14 @@
 #   ... | bash -s -- --read-only      install, but never let the driver write to the enclave
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
 #
-# Kernel: iconidentify/aurora-linux custom/sep (54ebceaef14d), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (e11a8bc74cb8), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
 # decoder (#45), the M2 Max (t6021) profile and the consolidated Touch ID
 # series (aurora-silicon/linux#69: matching after a reboot on every profile,
 # M1 Pro J314s, j293 SPI mode, a scan in progress ended before sleep),
-# Thunderbolt displays on M1 by default and on every M2 Pro/Max laptop
-# (aurora-silicon/linux#8), and the MacBook Neo (J700) work from #40, #42,
+# Thunderbolt displays on M1 and M1 Pro/Max by default, and two displays
+# through one dock on every M2 Pro/Max laptop (aurora-silicon/linux#8, with
+# #46, #50 and #64), and the MacBook Neo (J700) work from #40, #42,
 # #43, #54 and #55, including its Touch ID device tree.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
@@ -39,8 +40,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.16
-TAG=sep-7.1.12.aurora2-11.16
+VERSION=7.1.12.aurora2-11.17
+TAG=sep-7.1.12.aurora2-11.17
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -48,8 +49,8 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 5368979c976ae1ded203ce7938bcb20db3cf76109fd607687e825939272e1b94"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 94f88e0fe75da57b12984a29d9763e0f531dc36a91d5eb17cc37461b7f694725"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 47a0ff9f8c8fc00edd3485668e0c71cc6d43a846d2dbf7abb160fbe2f833704e"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 0fbb3c6f2c8c2bfc672ad02cf40ed50a418a5cdbebbc140eb00bd9cc017be6f4"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
   "aurora-touchid-20260930-1-any.pkg.tar.zst 2dc5bd93e923b551d201db469d094bfec6f8270de26ef3f0eda81137bf77f2f6"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
