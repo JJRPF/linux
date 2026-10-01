@@ -168,6 +168,11 @@ struct hw_info {
 	u32 port_rid2sid;
 	u32 port_msimap;
 	u32 max_rid2sid;
+	u32 pwren_off_ms;
+	u32 pwren_on_ms;
+	bool sid_indexed_rid2sid;
+	bool retain_clocks;
+	bool root_bus_only;
 	bool tunneled;
 };
 
@@ -192,6 +197,24 @@ static const struct hw_info t602x_hw = {
 	.port_msimap		= PORT_T602X_MSIMAP,
 	/* 16 on t602x, guess for autodetect on future HW */
 	.max_rid2sid		= 512,
+};
+
+/*
+ * T8140 uses the newer port register layout and a SID-indexed RID table.
+ * Keep the PHY and application clock policy established by the bootloader;
+ * runtime clock gating has not been qualified on this controller.
+ */
+static const struct hw_info t8140_hw = {
+	.port_msiaddr		= PORT_T602X_MSIADDR,
+	.port_perst		= PORT_T602X_PERST,
+	.port_rid2sid		= PORT_T602X_RID2SID,
+	.port_msimap		= PORT_T602X_MSIMAP,
+	.max_rid2sid		= 19,
+	.pwren_off_ms		= 2,
+	.pwren_on_ms		= 150,
+	.sid_indexed_rid2sid	= true,
+	.retain_clocks		= true,
+	.root_bus_only		= true,
 };
 
 static const struct hw_info t8103_pciec_hw = {
@@ -1114,25 +1137,40 @@ static int apple_pcie_setup_link(struct apple_pcie *pcie,
 	for (u32 idx = 0; idx < num_aux_resets; idx++)
 		gpiod_set_value_cansleep(aux_reset[idx], 1);
 
-	/* Power on the device if required */
-	gpiod_set_value_cansleep(pwren, 1);
-
-	ret = apple_pcie_setup_refclk(pcie, port);
-	if (ret < 0)
+	/* Power-cycle devices which cannot inherit their firmware state. */
+	if (pcie->hw->pwren_off_ms) {
+		if (!pwren)
+			return -EINVAL;
+		rmw_clear(PORT_PERST_OFF, port->base + pcie->hw->port_perst);
+		ret = gpiod_set_value_cansleep(pwren, 0);
+		if (ret)
+			return ret;
+		msleep(pcie->hw->pwren_off_ms);
+	}
+	ret = gpiod_set_value_cansleep(pwren, 1);
+	if (ret)
 		return ret;
+
+	if (!pcie->hw->retain_clocks) {
+		ret = apple_pcie_setup_refclk(pcie, port);
+		if (ret < 0)
+			return ret;
+	}
 
 	/*
 	 * The minimal Tperst-clk value is 100us (PCIe CEM r5.0, 2.9.2)
 	 * If powering up, the minimal Tpvperl is 100ms
 	 */
 	if (pwren)
-		msleep(100);
+		msleep(pcie->hw->pwren_on_ms ?: 100);
 	else
 		usleep_range(100, 200);
 
 	/* Deassert PERST# */
 	rmw_set(PORT_PERST_OFF, port->base + pcie->hw->port_perst);
-	gpiod_set_value_cansleep(reset, 0);
+	ret = gpiod_set_value_cansleep(reset, 0);
+	if (ret)
+		return ret;
 	for (u32 idx = 0; idx < num_aux_resets; idx++)
 		gpiod_set_value_cansleep(aux_reset[idx], 0);
 
@@ -1259,6 +1297,15 @@ static int apple_pcie_setup_port(struct apple_pcie *pcie,
 				goto err_teardown;
 		}
 	} else {
+		if (pcie->hw->retain_clocks)
+			rmw_set(PORT_APPCLK_EN, port->base + PORT_APPCLK);
+		if (pcie->hw->retain_clocks &&
+		    !(apple_pcie_port_readl(port, PORT_STATUS) & PORT_STATUS_READY)) {
+			ret = dev_err_probe(pcie->dev, -ENODEV,
+					    "port %pOF requires bootloader initialization\n",
+					    np);
+			goto err_teardown;
+		}
 		/* U-Boot may already have brought up a conventional root port. */
 		link_stat = apple_pcie_port_readl(port, PORT_LINKSTS);
 		if (!(link_stat & PORT_LINKSTS_UP)) {
@@ -1268,14 +1315,18 @@ static int apple_pcie_setup_port(struct apple_pcie *pcie,
 		}
 	}
 
-	if (pcie->hw->port_refclk)
-		rmw_clear(PORT_REFCLK_CGDIS, port->base + pcie->hw->port_refclk);
-	else if (port->phy)
-		rmw_set(PHY_LANE_CFG_REFCLKCGEN, port->phy + PHY_LANE_CFG);
+	if (!pcie->hw->retain_clocks) {
+		if (pcie->hw->port_refclk)
+			rmw_clear(PORT_REFCLK_CGDIS,
+				  port->base + pcie->hw->port_refclk);
+		else if (port->phy)
+			rmw_set(PHY_LANE_CFG_REFCLKCGEN,
+				port->phy + PHY_LANE_CFG);
 
-	/* The preinitialized PCIe-C APPCLK state is part of the m1n1 handoff. */
-	if (!pcie->hw->tunneled)
-		rmw_clear(PORT_APPCLK_CGDIS, port->base + PORT_APPCLK);
+		/* PCIe-C APPCLK state is part of the m1n1 handoff. */
+		if (!pcie->hw->tunneled)
+			rmw_clear(PORT_APPCLK_CGDIS, port->base + PORT_APPCLK);
+	}
 
 	ret = apple_pcie_port_setup_irq(port);
 	if (ret)
@@ -1323,6 +1374,11 @@ static int apple_pcie_setup_port(struct apple_pcie *pcie,
 	}
 	if (pcie->hw->tunneled)
 		port->started = true;
+	if (pcie->hw->root_bus_only)
+		dev_info(pcie->dev,
+			 "port %pOF RUN=%#x link=%#x; downstream config blocked\n",
+			 np, apple_pcie_port_readl(port, PORT_STATUS),
+			 apple_pcie_port_readl(port, PORT_LINKSTS));
 
 	return 0;
 
@@ -1466,7 +1522,18 @@ static int apple_pcie_enable_device(struct pci_host_bridge *bridge, struct pci_d
 
 	mutex_lock(&port->pcie->lock);
 
-	idx = bitmap_find_free_region(port->sid_map, port->sid_map_sz, 0);
+	if (port->pcie->hw->sid_indexed_rid2sid) {
+		if (sid >= port->sid_map_sz)
+			idx = -EINVAL;
+		else if (test_and_set_bit(sid, port->sid_map))
+			idx = -EBUSY;
+		else
+			idx = sid;
+	} else {
+		idx = bitmap_find_free_region(port->sid_map, port->sid_map_sz, 0);
+		if (idx < 0)
+			idx = -ENOSPC;
+	}
 	if (idx >= 0) {
 		apple_pcie_rid2sid_write(port, idx,
 					 PORT_RID2SID_VALID |
@@ -1478,7 +1545,7 @@ static int apple_pcie_enable_device(struct pci_host_bridge *bridge, struct pci_d
 
 	mutex_unlock(&port->pcie->lock);
 
-	return idx >= 0 ? 0 : -ENOSPC;
+	return idx >= 0 ? 0 : idx;
 }
 
 static void apple_pcie_disable_device(struct pci_host_bridge *bridge, struct pci_dev *pdev)
@@ -1531,12 +1598,37 @@ static int apple_pcie_init(struct pci_config_window *cfg)
 	return 0;
 }
 
+/*
+ * The staged T8140 path has no qualified PIODMA config transport yet.
+ * Reject downstream and inactive root-port accesses before mapping ECAM.
+ * Both generic config reads and writes use this callback.
+ */
+static void __iomem *apple_pcie_map_bus(struct pci_bus *bus,
+				      unsigned int devfn, int where)
+{
+	struct pci_config_window *cfg = bus->sysdata;
+	struct apple_pcie *pcie = apple_pcie_lookup(cfg->parent);
+	struct apple_pcie_port *port;
+
+	if (!pcie->hw->root_bus_only)
+		return pci_ecam_map_bus(bus, devfn, where);
+
+	if (bus->number != cfg->busr.start || PCI_FUNC(devfn))
+		return NULL;
+
+	list_for_each_entry(port, &pcie->ports, entry)
+		if (port->idx == PCI_SLOT(devfn))
+			return pci_ecam_map_bus(bus, devfn, where);
+
+	return NULL;
+}
+
 static const struct pci_ecam_ops apple_pcie_cfg_ecam_ops = {
 	.init		= apple_pcie_init,
 	.enable_device	= apple_pcie_enable_device,
 	.disable_device	= apple_pcie_disable_device,
 	.pci_ops	= {
-		.map_bus	= pci_ecam_map_bus,
+		.map_bus	= apple_pcie_map_bus,
 		.read		= pci_generic_config_read,
 		.write		= pci_generic_config_write,
 	}
@@ -1789,6 +1881,8 @@ static int apple_pcie_probe(struct platform_device *pdev)
 	pcie = pci_host_bridge_priv(bridge);
 	pcie->dev = dev;
 	pcie->hw = hw;
+	if (hw->root_bus_only)
+		dev_info(dev, "root-port probe only; downstream config is blocked\n");
 	pcie->base = devm_platform_ioremap_resource(pdev, 1);
 	if (IS_ERR(pcie->base))
 		return PTR_ERR(pcie->base);
@@ -1994,6 +2088,7 @@ static const struct of_device_id apple_pcie_of_match[] = {
 	{ .compatible = "apple,t8103-pciec",	.data = &t8103_pciec_hw },
 	{ .compatible = "apple,t6000-pciec",	.data = &t8103_pciec_hw },
 	{ .compatible = "apple,t6020-pcie",	.data = &t602x_hw },
+	{ .compatible = "apple,t8140-pcie",	.data = &t8140_hw },
 	{ .compatible = "apple,pcie",		.data = &t8103_hw },
 	{ }
 };
