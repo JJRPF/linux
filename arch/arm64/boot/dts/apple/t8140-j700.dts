@@ -1349,3 +1349,23 @@
 
 #include "hwmon-common.dtsi"
 #include "hwmon-laptop.dtsi"
+
+&pcie0 {
+	/* Staged root/link probe: the host driver blocks downstream config. */
+	pinctrl-0 = <&pcie0_clkreq>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&pcie0_port0 {
+	reset-gpios = <&pinctrl_ap 114 GPIO_ACTIVE_LOW>;
+	pwren-gpios = <&smc_gpio 8 GPIO_ACTIVE_HIGH>;
+	max-link-speed = <2>;
+	status = "okay";
+};
+
+&pinctrl_ap {
+	pcie0_clkreq: pcie0-clkreq {
+		pinmux = <APPLE_PINMUX(101, 2)>;
+	};
+};
