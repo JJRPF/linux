@@ -5,11 +5,14 @@
 #   ... | bash -s -- --read-only      install, but never let the driver write to the enclave
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
 #
-# Kernel: iconidentify/aurora-linux custom/sep (e4c91eb8eaf0), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (54ebceaef14d), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
 # decoder (#45), the M2 Max (t6021) profile and the consolidated Touch ID
 # series (aurora-silicon/linux#69: matching after a reboot on every profile,
-# M1 Pro J314s, j293 SPI mode, a scan in progress ended before sleep).
+# M1 Pro J314s, j293 SPI mode, a scan in progress ended before sleep),
+# Thunderbolt displays on M1 by default and on every M2 Pro/Max laptop
+# (aurora-silicon/linux#8), and the MacBook Neo (J700) work from #40, #42,
+# #43, #54 and #55, including its Touch ID device tree.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -18,8 +21,11 @@
 # service and this Mac's own sensor calibration. After the reboot, run
 # aurora-touchid-setup to enrol a finger and use it for sudo and the lock screen.
 #
-# m1n1: m1n1-aurora builds aurora-silicon/m1n1 main (97e2de3d4fec) plus one
-# patch, the usb4-N-pcie-adapter alias fallback (aurora-silicon/m1n1#4).
+# m1n1: m1n1-aurora builds AsahiLinux/m1n1 main (3e354a24), which knows the
+# macOS 26.5 to 27.0 firmware the MacBook Neo ships with, plus three patches:
+# the SEP warm-registration guard and preboot-UUID forwarding from
+# aurora-silicon/m1n1, and the usb4-N-pcie-adapter alias fallback
+# (aurora-silicon/m1n1#4).
 # On M2 and later the platform hands Linux an already-running Secure
 # Enclave, and the driver attaches to it with one registration that can only be
 # sent once per boot. Stock m1n1 asks the enclave for randomness on the way up,
@@ -33,8 +39,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.15
-TAG=sep-7.1.12.aurora2-11.15
+VERSION=7.1.12.aurora2-11.16
+TAG=sep-7.1.12.aurora2-11.16
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -42,11 +48,11 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 9a8d96c0e7270e0d2da24a1fa46f8762bbc4e76eb204d0619a5b904e5ab5a76a"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 81602dcf6c9961cb3f5b1b7c87cb97bdf8b84ead63a7b9d406df2c0b06ac1752"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 5368979c976ae1ded203ce7938bcb20db3cf76109fd607687e825939272e1b94"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 94f88e0fe75da57b12984a29d9763e0f531dc36a91d5eb17cc37461b7f694725"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
   "aurora-touchid-20260930-1-any.pkg.tar.zst 2dc5bd93e923b551d201db469d094bfec6f8270de26ef3f0eda81137bf77f2f6"
-  "m1n1-aurora-1.6.1.aurora2-2-aarch64.pkg.tar.zst 99f53b6a300d994965ccd9b0baf089122a4a3963180830544680b34ef34eaab6"
+  "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
 )
 PINNED="linux-aurora linux-aurora-headers libfprint m1n1-aurora"
 PIN_BEGIN="# >>> aurora-sep pin (remove with: install-aurora-sep.sh --uninstall)"
@@ -597,6 +603,8 @@ SAFETY, NON-NEGOTIABLE
      #   t8103            0x242408000  -> 0x242408110 / 0x242408114
      #   t8112            0x25e408000  -> 0x25e408110 / 0x25e408114
      #   t600x, t602x     0x396408000  -> 0x396408110 / 0x396408114
+     #   t8140 (Neo)      0x282608000  (a v4 mailbox: report the base and
+     #                    the /proc/interrupts lines, not these offsets)
 
    Bit 0 is the enable; a non-zero FIFO count with an unchanged read pointer
    means the enclave never took the message. Report the raw values, not your
