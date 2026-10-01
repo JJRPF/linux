@@ -132,6 +132,8 @@ config APPLE_SEP
 	  Shared xART writes and identity-keybag creation default on. A write
 	  still runs only when APFS proves a single unsnapshotted .gl extent.
 	  The first boot creates the Linux identity keybag when it is absent.
+	  With writes off the driver still attaches, but refuses Touch ID enrol
+	  and verify: the enclave saves anti-replay state after every match.
 
 	  Say Y here if you have an Apple silicon Mac.
 
