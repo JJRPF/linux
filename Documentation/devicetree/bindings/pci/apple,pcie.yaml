@@ -49,6 +49,7 @@ properties:
           - const: apple,t8122-pcie
           - const: apple,t6020-pcie
       - const: apple,t6020-pcie
+      - const: apple,t8140-pcie
       - const: apple,t8103-pciec
       - items:
           - const: apple,t8112-pciec
@@ -180,21 +181,46 @@ allOf:
           maxItems: 3
     else:
       properties:
-        reg-names:
-          minItems: 3
-          items:
-            - const: config
-            - const: rc
-            - const: port0
-            - const: port1
-            - const: port2
-            - const: port3
-            - const: phy0
-            - const: phy1
-            - const: phy2
-            - const: phy3
         ranges:
           maxItems: 2
+      allOf:
+        - if:
+            properties:
+              compatible:
+                contains:
+                  const: apple,t8140-pcie
+          then:
+            properties:
+              reg:
+                minItems: 8
+                maxItems: 8
+              reg-names:
+                items:
+                  - const: config
+                  - const: rc
+                  - const: port0
+                  - const: port1
+                  - const: port2
+                  - const: phy0
+                  - const: phy1
+                  - const: phy2
+              interrupts:
+                maxItems: 3
+          else:
+            properties:
+              reg-names:
+                minItems: 3
+                items:
+                  - const: config
+                  - const: rc
+                  - const: port0
+                  - const: port1
+                  - const: port2
+                  - const: port3
+                  - const: phy0
+                  - const: phy1
+                  - const: phy2
+                  - const: phy3
       patternProperties:
         "^pci@":
           required:
