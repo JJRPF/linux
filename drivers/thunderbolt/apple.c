@@ -209,7 +209,7 @@ struct apple_cio {
 
 static bool dp_display = true;
 module_param(dp_display, bool, 0444);
-MODULE_PARM_DESC(dp_display, "Drive displays behind Thunderbolt DP tunnels (experimental, t8103)");
+MODULE_PARM_DESC(dp_display, "Drive displays behind Thunderbolt DP tunnels on t8103 (default: true)");
 
 /* DPTX_INACTIVE handshake: request (in)active, wait for the ACK */
 struct apple_dpin_poll {
