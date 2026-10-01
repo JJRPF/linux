@@ -19,7 +19,9 @@
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
 #
 # Touch ID: libfprint with the Apple SEP driver, fprintd, the apple-sep
-# service and this Mac's own sensor calibration. After the reboot, run
+# service, a sleep hook that stops fprintd before suspend (so a lock screen
+# waiting for a finger at lid close can't leave the sensor claimed), and
+# this Mac's own sensor calibration. After the reboot, run
 # aurora-touchid-setup to enrol a finger and use it for sudo and the lock screen.
 #
 # m1n1: m1n1-aurora builds AsahiLinux/m1n1 main (3e354a24), which knows the
@@ -41,7 +43,7 @@ set -euo pipefail
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
 VERSION=7.1.12.aurora2-11.17
-TAG=sep-7.1.12.aurora2-11.17
+TAG=sep-7.1.12.aurora2-11.18
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -52,7 +54,7 @@ PACKAGES=(
   "linux-aurora-$VERSION-aarch64.pkg.tar.zst 47a0ff9f8c8fc00edd3485668e0c71cc6d43a846d2dbf7abb160fbe2f833704e"
   "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 0fbb3c6f2c8c2bfc672ad02cf40ed50a418a5cdbebbc140eb00bd9cc017be6f4"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
-  "aurora-touchid-20260930-1-any.pkg.tar.zst 2dc5bd93e923b551d201db469d094bfec6f8270de26ef3f0eda81137bf77f2f6"
+  "aurora-touchid-20261001-1-any.pkg.tar.zst bc6438d23dc2aae2766677f41f3f6d61ec3716df55c3b7a9c2cf93a027c68660"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
 )
 PINNED="linux-aurora linux-aurora-headers libfprint m1n1-aurora"
