@@ -2,7 +2,7 @@
 #ifndef __ASM_APPLE_IDLE_H
 #define __ASM_APPLE_IDLE_H
 
-/* WFI that preserves x18-x30 on cores that lose them (Apple T8140). */
+/* WFI that preserves x18-x30 on affected Apple cores (T8140 and T8152). */
 void apple_cpu_wfi(void);
 
 #endif
