@@ -878,7 +878,7 @@ impl SepData {
     fn attach(&self, sep_node: &dt::DtNode) -> Result<()> {
         match self.profile.bootstrap {
             profile::Bootstrap::WarmRegister => self.attach_warm(sep_node),
-            profile::Bootstrap::Boot => self.attach_m1(),
+            profile::Bootstrap::Boot => self.attach_m1(sep_node),
         }
     }
 
@@ -916,7 +916,19 @@ impl SepData {
 
     /// Cold boot: send TZ0 and let the boot-endpoint acknowledgements drive the
     /// firmware and shared-memory handoff.
-    fn attach_m1(&self) -> Result<()> {
+    fn attach_m1(&self, sep_node: &dt::DtNode) -> Result<()> {
+        // The SEP stays booted after rmmod and Linux cannot reset it, so a
+        // reload's TZ0 would go unanswered. Record the boot first, as the warm
+        // path does, so a reload stops at probe and says to reboot instead.
+        let iova = self.shmem.lock().as_ref().map_or(0, |buf| buf.dma_handle());
+        if let Err(e) = dt::mark_registration_sent(sep_node, iova) {
+            dev_err!(
+                self.dev,
+                "could not record the boot marker ({:?}); refusing to boot the SEP, since a reload could not tell it is already running\n",
+                e
+            );
+            return Err(e);
+        }
         let msg = Message {
             msg0: u64::from(proto::EP_BOOT) | (proto::MSG_BOOT_TZ0 << proto::MSG_TYPE_SHIFT),
             msg1: 0,
@@ -2250,7 +2262,7 @@ impl platform::Driver for SepDriver {
         if dt::registration_already_sent(&sep_node) {
             dev_err!(
                 dev,
-                "the shared-memory registration was already sent on this boot (marker property present). It is one-shot per AP reset and cannot be repeated or withdrawn: reboot to attach again. Not probing.\n"
+                "the SEP was already booted or registered on this boot by an earlier load (marker property present). Linux cannot reset it and the handoff cannot be repeated, so reloading the driver is not supported: reboot to attach again. Not probing.\n"
             );
             return Err(EBUSY);
         }
