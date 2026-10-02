@@ -107,6 +107,10 @@ description: |
   - MacBook Pro (14-inch, M3, 2023)
   - iMac (24-inch, M3, 2023)
 
+  Devices based on the "M5" SoC:
+
+  - MacBook Air (13-inch, M5, 2026)
+
   Devices based on the "M1 Pro", "M1 Max" and "M1 Ultra" SoCs:
 
   - MacBook Pro (14-inch, M1 Pro, 2021)
@@ -346,6 +350,12 @@ properties:
           - const: apple,t8132
           - const: apple,arm-platform
 
+      - description: Apple M5 SoC based platforms
+        items:
+          - const: apple,j813  # MacBook Air (13-inch, M5, 2026)
+          - const: apple,t8142
+          - const: apple,arm-platform
+
       - description: Apple M1 Pro SoC based platforms
         items:
           - enum:
@@ -424,6 +434,15 @@ properties:
           - const: apple,j575d  # Mac Studio (M3 Ultra, 2025)
           - const: apple,t6032
           - const: apple,arm-platform
+
+  aurora,minimal-boot:
+    type: boolean
+    description:
+      Request a minimal native RAM boot from the Aurora m1n1 loader. Skip
+      generic PCIe and DAPF initialization and the legacy EL2 Apple Device
+      Tree handoff. The loader still supplies the Linux flattened device
+      tree, usable memory, reserved regions and CPU release addresses.
+      Used during initial J813 bring-up without DMA peripherals.
 
 additionalProperties: true
 
