@@ -2,6 +2,7 @@
 /* Copyright 2022 Eileen Yoon <eyn@gmx.com> */
 
 #include <linux/atomic.h>
+#include <linux/device.h>
 #include <linux/iommu.h>
 #include <linux/ktime.h>
 #include <linux/module.h>

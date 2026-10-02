@@ -8,7 +8,6 @@
 
 #include <linux/atomic.h>
 #include <linux/seq_file.h>
-#include <linux/string.h>
 #include <linux/sysfs.h>
 
 #include "ane_stats.h"
