@@ -911,7 +911,8 @@ static int ane_rtclient_command(struct ane_rtclient *ane,
 						     unsigned int timeout_ms)
 {
 	int ret;
-	u32 stats_idx = 0;
+	u64 stats_ticket = 0;
+	u64 stats_submit_ns = 0;
 
 	ane_t6021_tracing = opcode == CSNE_CMD_PROCEDURE_CALL && trace_td &&
 			    ane->soc->trace_td_off;
@@ -919,16 +920,34 @@ static int ane_rtclient_command(struct ane_rtclient *ane,
 		ane_t6021_trace->calls++;
 		ane_t6021_trace_add(ANE_TR_CALL, 0);
 	}
-	if (ane->stats_slots)
-		stats_idx = ane_stats_begin(&ane->stats_ring, ktime_get_ns(),
-					    1);
+	/* Producer contract hot path (ane_stats.h): record submit at
+	 * command enqueue, completion after the call returns, one
+	 * begin/complete pair per engine submission. Only
+	 * CSNE_CMD_PROCEDURE_CALL is engine work; the control-plane
+	 * exchanges that ride this function (LOAD_PROGRAM,
+	 * CREATE_PROCESS, CH_PROPERTY_WRITE, CONFIG_GET) are not
+	 * counted, so jobs matches the engine calls the workload made.
+	 * The T6021 path can run concurrently (MBI per-channel rings),
+	 * so overlapping calls share a busy period and busy_ns is the
+	 * union of the submit-to-completion windows. tmst is 0 (no
+	 * host TM on T6021; documented in the file header line).
+	 * tasks = 1 (one call per submission); rc = ret.
+	 */
+	bool stats_call = stats && opcode == CSNE_CMD_PROCEDURE_CALL;
+
+	if (stats_call) {
+		stats_submit_ns = ktime_get_ns();
+		stats_ticket = ane_stats_begin(&ane->stats_ctrs,
+					       &ane->stats_ring,
+					       stats_submit_ns, 1);
+	}
 	ret = ane_rtclient_legacy_exchange(ane, command, length, opcode,
 					   channel, timeout_ms);
 	if (ret) {
 		ane_t6021_tracing = false;
-		if (ane->stats_slots)
+		if (stats_call)
 			ane_stats_complete(&ane->stats_ctrs,
-					   &ane->stats_ring, stats_idx,
+					   &ane->stats_ring, stats_ticket,
 					   ktime_get_ns(), (u32)ret, 0);
 		dev_info(ane->dev, "EXCH op=%#x failed %d (fw allocs %u, %zu bytes)\n",
 			 opcode, ret, ane->legacy_allocated, ane->legacy_bytes);
@@ -943,10 +962,11 @@ static int ane_rtclient_command(struct ane_rtclient *ane,
 		if (!ret && call_settle_us)
 			usleep_range(call_settle_us, call_settle_us + 100);
 		if (ret) {
-			if (ane->stats_slots)
+			if (stats_call)
 				ane_stats_complete(&ane->stats_ctrs,
 						   &ane->stats_ring,
-						   stats_idx, ktime_get_ns(),
+						   stats_ticket,
+						   ktime_get_ns(),
 						   (u32)ret, 0);
 			dev_info(ane->dev, "call completion wait failed %d\n",
 				 ret);
@@ -954,9 +974,9 @@ static int ane_rtclient_command(struct ane_rtclient *ane,
 			return ret;
 		}
 	}
-	if (ane->stats_slots)
+	if (stats_call)
 		ane_stats_complete(&ane->stats_ctrs, &ane->stats_ring,
-				   stats_idx, ktime_get_ns(), 0, 0);
+				   stats_ticket, ktime_get_ns(), 0, 0);
 	/* The fw talks back on the target-to-host rings (fwlog, perf);
 	 * hand those slots back so the rings never fill (the sequencer
 	 * did this per step; same ack, channels 4 and 6).

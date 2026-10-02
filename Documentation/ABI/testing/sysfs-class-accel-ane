@@ -8,14 +8,34 @@ Description:
 		0444 (readable without root):
 
 		busy_ns: nanoseconds the engine was busy since the
-		device was bound. ane serializes submissions
-		(M1 family), so this is the sum of the
-		submit-to-completion windows; ane_t6021 (M2
-		family) can run submissions in parallel, so
-		overlapping windows count once.
+		device was bound, sampled with a consistent
+		close/open snapshot. A busy period opens
+		when the first submission lands on an idle
+		engine and closes when the last one
+		completes; its whole span folds once at
+		close, and overlapping submissions share
+		the period, so a serialized engine
+		(ane.ko, behind engine_lock) reports
+		sum(end - start) and a parallel engine
+		(ane_t6021) reports the union, never the
+		sum. The show callback adds the live tail
+		of the still-open period, so the value
+		advances while engine work is in flight.
 
-		jobs: completed submissions since the device was
-		bound.
+		jobs: completed engine submissions since the
+		device was bound. On ane.ko every ANE_SUBMIT
+		counts (one per libane ane_exec, N per
+		ane_exec_loop). On ane_t6021 only
+		CSNE_CMD_PROCEDURE_CALL counts (one per
+		engine PROCEDURE_CALL); the control-plane
+		exchanges that ride the same path
+		(LOAD_PROGRAM, CREATE_PROCESS,
+		CH_PROPERTY_WRITE, install-time CONFIG_GET)
+		and the boot transport are not engine
+		work and are not counted. A submission
+		that completes with an error still
+		completes its begin/complete pair, so the
+		counter stays balanced.
 
 		Neither counter resets while the device is bound.
 
@@ -26,3 +46,5 @@ Description:
 
 Users:		performance samplers that compute engine utilization
 		and job rate from the two counters.
+
+

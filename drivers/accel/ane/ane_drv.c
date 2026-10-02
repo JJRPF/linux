@@ -493,7 +493,7 @@ static int ane_submit(struct drm_device *drm, void *data, struct drm_file *file)
 	struct drm_gem_object *btsp = NULL;
 	struct ane_bo *bo;
 	struct ane_request req;
-	u32 stats_idx = 0;
+	u64 stats_idx = 0;
 	int err;
 
 	memset(&req, 0, sizeof(req));
@@ -576,8 +576,8 @@ static int ane_submit(struct drm_device *drm, void *data, struct drm_file *file)
 		goto unlock;
 
 	if (ane->stats_slots)
-		stats_idx = ane_stats_begin(&ane->stats_ring, ktime_get_ns(),
-					    req.td_count);
+		stats_idx = ane_stats_begin(&ane->stats_ctrs, &ane->stats_ring,
+					    ktime_get_ns(), req.td_count);
 
 	ane_boost_begin(ane);
 	err = ane_tm_execute(ane, &req);
