@@ -382,6 +382,7 @@ static int sep_sensor_probe(struct spi_device *spi)
 	if (rc)
 		return dev_err_probe(&spi->dev, rc, "sep sensor: power unavailable\n");
 	sep_spi = spi;
+	sep_diag_set_sensor_bound(true);
 	/* Read the mode back: a mode that did not take must not be logged as
 	 * the one requested. */
 	dev_info(&spi->dev,
@@ -397,6 +398,7 @@ static void sep_sensor_remove(struct spi_device *spi)
 	sep_sensor_irq_teardown();
 	sep_release_power();
 	sep_spi = NULL;
+	sep_diag_set_sensor_bound(false);
 }
 
 /*

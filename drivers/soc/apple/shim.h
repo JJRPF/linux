@@ -145,6 +145,28 @@ int sep_sensor_irq_available(void);
 void sep_sensor_irq_arm(void);
 int sep_sensor_irq_wait(unsigned int timeout_ms);
 
+/* -- diag_shim.c -------------------------------------------------------- */
+
+/* Mirrored by diag.rs. */
+#define SEP_DIAG_KEYBAG_UNKNOWN		0
+#define SEP_DIAG_KEYBAG_PRESENT		1
+#define SEP_DIAG_KEYBAG_MISSING		2
+#define SEP_DIAG_KEYBAG_FAILED		3
+
+struct device;
+
+int sep_diag_register(struct device *dev, const char *profile,
+		      size_t profile_len, bool cold, bool sepos13, bool xart);
+void sep_diag_set_attach(bool attached);
+void sep_diag_set_endpoints(unsigned int count);
+void sep_diag_set_keystore_open(void);
+void sep_diag_set_keybag(int state);
+void sep_diag_set_sensor_bound(bool bound);
+void sep_diag_set_sensor_result(bool online);
+void sep_diag_set_bio_published(void);
+void sep_diag_set_touchid(bool started);
+void sep_diag_bringup_ended(void);
+
 /* -- bio_shim.c --------------------------------------------------------- */
 
 void *sep_bio_register(const char *name, unsigned short mode, void *ctx,
