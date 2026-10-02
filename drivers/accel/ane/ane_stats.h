@@ -42,11 +42,11 @@
 
 #ifdef __KERNEL__
 #include <linux/atomic.h>
-#include <linux/fs.h>
 #include <linux/ktime.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
 #include <linux/sysfs.h>
+#include <drm/drm_debugfs.h>
 #define ane_stats_atomic_u64	atomic64_t
 #define ane_stats_atomic_u32	atomic_t
 static inline u64 ane_stats_atomic64_read(const atomic64_t *v) { return atomic64_read(v); }
@@ -389,14 +389,18 @@ static inline void ane_stats_complete(struct ane_stats_counters *ctrs,
 	ane_stats_atomic64_set_release(&e->seq, 2ull * ticket);
 }
 
-/* The timeline formatter and its fops are header-only so each module
- * gets its own copy: kbuild rejects one object linked into two
- * modules, and with both drivers built-in a shared object would
- * duplicate symbols at vmlinux link. THIS_MODULE resolves per TU, so
- * each driver's debugfs file is owned by the module that created it. */
+/*
+ * The timeline formatter is header-only so each module gets its own
+ * copy: kbuild rejects one object linked into two modules, and with
+ * both drivers built-in a shared object would duplicate symbols at
+ * vmlinux link. Both drivers register it with drm_debugfs_add_file(),
+ * so m->private is the struct drm_debugfs_entry and the ring is the
+ * data pointer given at registration.
+ */
 static inline int ane_timeline_show(struct seq_file *m, void *v)
 {
-	struct ane_stats_ring *ring = m->private;
+	struct drm_debugfs_entry *entry = m->private;
+	struct ane_stats_ring *ring = entry->file.data;
 	struct ane_stats_ring_entry *ring_slots = ring->slots;
 	uint32_t mask = ring->mask;
 	uint64_t head = ane_stats_atomic64_read(&ring->head);
@@ -430,24 +434,6 @@ static inline int ane_timeline_show(struct seq_file *m, void *v)
 			   (unsigned long long)tmst);
 	}
 	return 0;
-}
-
-static inline int ane_timeline_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, ane_timeline_show, inode->i_private);
-}
-
-static inline const struct file_operations *ane_timeline_fops(void)
-{
-	static const struct file_operations fops = {
-		.owner		= THIS_MODULE,
-		.open		= ane_timeline_open,
-		.read		= seq_read,
-		.llseek		= seq_lseek,
-		.release	= single_release,
-	};
-
-	return &fops;
 }
 
 #define ANE_STATS_RING_ORDER_DEFAULT 8  /* 256 slots */

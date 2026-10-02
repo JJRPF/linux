@@ -931,9 +931,12 @@ static int ane_rtclient_command(struct ane_rtclient *ane,
 	 * so overlapping calls share a busy period and busy_ns is the
 	 * union of the submit-to-completion windows. tmst is 0 (no
 	 * host TM on T6021; documented in the file header line).
-	 * tasks = 1 (one call per submission); rc = ret.
+	 * tasks = 1 (one call per submission); rc = ret. The gate is the
+	 * ring, as on ane.ko: stats=0 or a failed probe allocation leaves
+	 * stats_slots NULL, and the hooks must not run on a NULL ring.
 	 */
-	bool stats_call = stats && opcode == CSNE_CMD_PROCEDURE_CALL;
+	bool stats_call = ane->stats_slots &&
+			  opcode == CSNE_CMD_PROCEDURE_CALL;
 
 	if (stats_call) {
 		stats_submit_ns = ktime_get_ns();
@@ -2455,8 +2458,8 @@ MODULE_DEVICE_TABLE(of, ane_rtclient_of_match);
 
 /*
  * ane_stats: cumulative busy_ns/jobs for this device (mode 0444, no
- * root needed). Formatting lives in ane_stats_show.c, shared with
- * ane.ko.
+ * root needed). Formatting lives in ane_stats_emit() (ane_stats.h),
+ * shared with ane.ko.
  */
 static ssize_t ane_stats_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)

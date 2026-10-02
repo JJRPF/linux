@@ -636,8 +636,8 @@ static DEVICE_ATTR_WO(reset);
 
 /*
  * ane_stats: cumulative busy_ns/jobs for this device (mode 0444, no
- * root needed). Formatting lives in ane_stats_show.c, shared with
- * ane_t6021.ko.
+ * root needed). Formatting lives in ane_stats_emit() (ane_stats.h),
+ * shared with ane_t6021.ko.
  */
 static ssize_t ane_stats_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
