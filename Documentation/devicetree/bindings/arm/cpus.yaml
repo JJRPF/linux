@@ -95,6 +95,9 @@ properties:
           - apple,mistral
           - apple,monsoon
           - apple,sawtooth
+          - apple,t8152-e
+          - apple,t8152-m
+          - apple,t8152-p
           - apple,tahiti-e
           - apple,tahiti-p
           - apple,twister
