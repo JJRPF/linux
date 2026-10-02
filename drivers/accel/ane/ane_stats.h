@@ -42,7 +42,9 @@
 
 #ifdef __KERNEL__
 #include <linux/atomic.h>
+#include <linux/fs.h>
 #include <linux/ktime.h>
+#include <linux/seq_file.h>
 #include <linux/string.h>
 #include <linux/sysfs.h>
 #define ane_stats_atomic_u64	atomic64_t
@@ -387,7 +389,66 @@ static inline void ane_stats_complete(struct ane_stats_counters *ctrs,
 	ane_stats_atomic64_set_release(&e->seq, 2ull * ticket);
 }
 
-int ane_timeline_show(struct seq_file *m, void *v);
+/* The timeline formatter and its fops are header-only so each module
+ * gets its own copy: kbuild rejects one object linked into two
+ * modules, and with both drivers built-in a shared object would
+ * duplicate symbols at vmlinux link. THIS_MODULE resolves per TU, so
+ * each driver's debugfs file is owned by the module that created it. */
+static inline int ane_timeline_show(struct seq_file *m, void *v)
+{
+	struct ane_stats_ring *ring = m->private;
+	struct ane_stats_ring_entry *ring_slots = ring->slots;
+	uint32_t mask = ring->mask;
+	uint64_t head = ane_stats_atomic64_read(&ring->head);
+	uint64_t live = head < (uint64_t)mask + 1ull ? head : (uint64_t)mask + 1ull;
+	uint64_t i;
+
+	seq_printf(m, "# ane_timeline: seq submit_ns start_ns end_ns tasks rc tmst (tmst raw tick on ane.ko, 0 = unavailable on ane_t6021)\n");
+	/* Newest first. Submission ticket t lives in slot (t - 1) & mask
+	 * and prints once complete() commits seq = 2*t; anything else
+	 * (odd in-flight seq, stale slot) is skipped. */
+	for (i = 0; i < live; i++) {
+		uint64_t ticket = head - i;
+		struct ane_stats_ring_entry *e =
+			&ring_slots[(size_t)(ticket - 1ull) & mask];
+		uint64_t seq = ane_stats_atomic64_read_acquire(&e->seq);
+		uint64_t submit = ane_stats_atomic64_read(&e->submit_ns);
+		uint64_t st = ane_stats_atomic64_read(&e->start_ns);
+		uint64_t en = ane_stats_atomic64_read(&e->end_ns);
+		uint32_t tasks = ane_stats_atomic_read(&e->tasks);
+		uint32_t rc = ane_stats_atomic_read(&e->rc);
+		uint64_t tmst = ane_stats_atomic64_read(&e->tmst);
+
+		if (seq != 2ull * ticket)
+			continue; /* in flight or stale; never printed */
+		seq_printf(m, "%llu %llu %llu %llu %u %u %llu\n",
+			   (unsigned long long)(2ull * ticket),
+			   (unsigned long long)submit,
+			   (unsigned long long)st,
+			   (unsigned long long)en,
+			   tasks, (unsigned)rc,
+			   (unsigned long long)tmst);
+	}
+	return 0;
+}
+
+static inline int ane_timeline_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ane_timeline_show, inode->i_private);
+}
+
+static inline const struct file_operations *ane_timeline_fops(void)
+{
+	static const struct file_operations fops = {
+		.owner		= THIS_MODULE,
+		.open		= ane_timeline_open,
+		.read		= seq_read,
+		.llseek		= seq_lseek,
+		.release	= single_release,
+	};
+
+	return &fops;
+}
 
 #define ANE_STATS_RING_ORDER_DEFAULT 8  /* 256 slots */
 #define ANE_STATS_RING_ORDER_MAX     10 /* 1024 slots */
