@@ -36,6 +36,7 @@
 
 #include "../pci.h"
 #include "pci-host-common.h"
+#include "pcie-apple-piodma-diag.h"
 
 static int link_up_timeout = 500;
 module_param(link_up_timeout, int, 0644);
@@ -238,6 +239,9 @@ struct apple_pcie {
 	struct apple_tunable	*debug_tunable;
 	bool			power_retained;
 	bool			bus_stopped;
+	bool			neo_config_ready;
+	u8			neo_secondary_bus;
+	struct device		*piodma_supplier;
 	const struct hw_info	*hw;
 	unsigned long		*bitmap;
 	struct list_head	ports;
@@ -1494,7 +1498,7 @@ static int apple_pcie_enable_device(struct pci_host_bridge *bridge, struct pci_d
 {
 	struct apple_pcie *pcie = pci_host_bridge_priv(bridge);
 	struct resource *res;
-	u32 sid, rid = pci_dev_id(pdev);
+	u32 sid, val, readback, rid = pci_dev_id(pdev);
 	struct apple_pcie_port *port;
 	int idx, err;
 
@@ -1535,9 +1539,15 @@ static int apple_pcie_enable_device(struct pci_host_bridge *bridge, struct pci_d
 			idx = -ENOSPC;
 	}
 	if (idx >= 0) {
-		apple_pcie_rid2sid_write(port, idx,
-					 PORT_RID2SID_VALID |
-					 (sid << PORT_RID2SID_SID_SHIFT) | rid);
+		val = PORT_RID2SID_VALID | (sid << PORT_RID2SID_SID_SHIFT) | rid;
+		readback = apple_pcie_rid2sid_write(port, idx, val);
+		if (pcie->hw->sid_indexed_rid2sid && readback != val) {
+			dev_err(&pdev->dev, "RID-to-SID readback %#x expected %#x\n",
+				readback, val);
+			/* Reserve the failed slot; do not enable or recycle it. */
+			mutex_unlock(&port->pcie->lock);
+			return -EIO;
+		}
 
 		dev_dbg(&pdev->dev, "mapping RID%x to SID%x (index %d)\n",
 			rid, sid, idx);
@@ -1599,9 +1609,9 @@ static int apple_pcie_init(struct pci_config_window *cfg)
 }
 
 /*
- * The staged T8140 path has no qualified PIODMA config transport yet.
- * Reject downstream and inactive root-port accesses before mapping ECAM.
- * Both generic config reads and writes use this callback.
+ * The T8140 experiment starts with all downstream accesses blocked.
+ * Only a successful owned bootstrap and typed ECAM checks open functions0/1.
+ * Generic config callbacks retain their normal native widths and locking.
  */
 static void __iomem *apple_pcie_map_bus(struct pci_bus *bus,
 				      unsigned int devfn, int where)
@@ -1613,7 +1623,15 @@ static void __iomem *apple_pcie_map_bus(struct pci_bus *bus,
 	if (!pcie->hw->root_bus_only)
 		return pci_ecam_map_bus(bus, devfn, where);
 
-	if (bus->number != cfg->busr.start || PCI_FUNC(devfn))
+	if (bus->number != cfg->busr.start) {
+		/* Pair with ready publication before consuming the bus number. */
+		if (!smp_load_acquire(&pcie->neo_config_ready) ||
+		    bus->number != pcie->neo_secondary_bus ||
+		    PCI_SLOT(devfn) || PCI_FUNC(devfn) > 1)
+			return NULL;
+		return pci_ecam_map_bus(bus, devfn, where);
+	}
+	if (PCI_FUNC(devfn))
 		return NULL;
 
 	list_for_each_entry(port, &pcie->ports, entry)
@@ -1843,6 +1861,158 @@ static int apple_pcie_tunnel_add_links(struct apple_pcie *pcie)
 	return 0;
 }
 
+static int apple_pcie_neo_typed_ids(struct apple_pcie *pcie, struct pci_dev *root)
+{
+	static const u32 ids[] = { 0x793214c3, 0x793b14c3 };
+	void __iomem *cfg;
+	u32 id;
+	u16 vendor, device;
+	u8 low, high, header;
+	int function;
+
+	for (function = 0; function < ARRAY_SIZE(ids); function++) {
+		/* Bypass the closed guard only for these fixed validation reads. */
+		cfg = pci_ecam_map_bus(root->subordinate, PCI_DEVFN(0, function), 0);
+		if (!cfg)
+			return -ENODEV;
+		id = readl(cfg + PCI_VENDOR_ID);
+		vendor = readw(cfg + PCI_VENDOR_ID);
+		device = readw(cfg + PCI_DEVICE_ID);
+		low = readb(cfg + PCI_VENDOR_ID);
+		high = readb(cfg + PCI_VENDOR_ID + 1);
+		header = readb(cfg + PCI_HEADER_TYPE);
+		dev_info(pcie->dev,
+			 "typed ECAM function=%d id=%#x vendor=%#x device=%#x bytes=%02x:%02x header=%#x\n",
+			 function, id, vendor, device, low, high, header);
+		if (id != ids[function] || vendor != (ids[function] & 0xffff) ||
+		    device != ids[function] >> 16 || low != 0xc3 || high != 0x14 ||
+		    (header & PCI_HEADER_TYPE_MASK) != PCI_HEADER_TYPE_NORMAL ||
+		    (!function && !(header & PCI_HEADER_TYPE_MFD)))
+			return -EIO;
+	}
+	return 0;
+}
+
+static int apple_pcie_neo_check_memory(struct pci_dev *root)
+{
+	struct pci_dev *endpoint;
+	struct pci_bus_region region;
+	struct resource *res;
+	u32 window = U32_MAX;
+	u64 base, limit;
+	u16 command = U16_MAX;
+	int function, bar, ret = 0;
+
+	ret = pci_read_config_word(root, PCI_COMMAND, &command);
+	if (!ret)
+		ret = pci_read_config_dword(root, PCI_MEMORY_BASE, &window);
+	pci_info(root, "NEO_ROOT_MEMORY_READBACK status=%d command=%#x window=%#x\n",
+		 ret, command, window);
+	if (ret || command == U16_MAX || !(command & PCI_COMMAND_MEMORY) || window == U32_MAX)
+		return -EIO;
+	/* Each packed register field is12 bits; PCI_MEMORY_RANGE_MASK is unsigned long. */
+	base = (u64)(window & GENMASK(15, 4)) << 16;
+	limit = (window & GENMASK(31, 20)) | GENMASK(19, 0);
+	if (base > limit)
+		return -EIO;
+	for (function = 0; function < 2; function++) {
+		endpoint = pci_get_slot(root->subordinate, PCI_DEVFN(0, function));
+		if (!endpoint)
+			return -ENODEV;
+		for (bar = 0; bar < PCI_STD_NUM_BARS; bar++) {
+			res = &endpoint->resource[bar];
+			if (!(res->flags & IORESOURCE_MEM))
+				continue;
+			pcibios_resource_to_bus(endpoint->bus, &region, res);
+			if (!res->parent || !resource_size(res) ||
+			    res->flags & (IORESOURCE_UNSET | IORESOURCE_DISABLED | IORESOURCE_PREFETCH) ||
+			    region.start < base || region.end > limit) {
+				pci_err(endpoint, "BAR%d outside programmed root memory window\n", bar);
+				ret = -ERANGE;
+				break;
+			}
+		}
+		pci_dev_put(endpoint);
+		if (ret)
+			return ret;
+	}
+	pci_info(root, "NEO_ROOT_MEMORY_ENABLED command=%#x window=%#x bus=%#llx-%#llx\n",
+		 command, window, base, limit);
+	return 0;
+}
+
+static int apple_pcie_neo_enumerate(struct pci_host_bridge *bridge)
+{
+	struct apple_pcie *pcie = pci_host_bridge_priv(bridge);
+	struct pci_dev *root, *endpoint;
+	u16 command;
+	int function, ret;
+
+	root = pci_get_slot(bridge->bus, PCI_DEVFN(0, 0));
+	if (!root)
+		return -ENODEV;
+	if (!root->subordinate || root->subordinate->number != 1) {
+		ret = -EINVAL;
+		goto out;
+	}
+	/* No config/raw spinlock is held across this process-context request. */
+	ret = apple_piodma_bootstrap_prime(pcie->piodma_supplier, root);
+	if (ret)
+		goto out;
+	ret = apple_pcie_neo_typed_ids(pcie, root);
+	if (ret)
+		goto out;
+	pcie->neo_secondary_bus = root->subordinate->number;
+	pci_lock_rescan_remove();
+	/* Publish validated bootstrap state and bus number before config access. */
+	smp_store_release(&pcie->neo_config_ready, true);
+	/* Root was already enabled by the closed scan. The bridge-specific API
+	 * programs its new windows even when the generic bus rescan would skip
+	 * pci_setup_bridge(). Publish children only after hardware validation.
+	 */
+	pci_scan_child_bus(root->subordinate);
+	pci_assign_unassigned_bridge_resources(root);
+	ret = apple_pcie_neo_check_memory(root);
+	if (ret) {
+		dev_err(pcie->dev, "root memory forwarding unavailable after assignment: %d\n", ret);
+		goto close_config;
+	}
+	pci_bus_add_devices(root->subordinate);
+	for (function = 0; function < 2; function++) {
+		endpoint = pci_get_slot(root->subordinate, PCI_DEVFN(0, function));
+		if (!endpoint) {
+			ret = -ENODEV;
+			break;
+		}
+		if (pci_read_config_word(endpoint, PCI_COMMAND, &command)) {
+			ret = -EIO;
+		} else {
+			dev_info(pcie->dev, "enumerated %s id=%04x:%04x command=%#x driver=%s\n",
+				 pci_name(endpoint), endpoint->vendor, endpoint->device, command,
+				 endpoint->driver ? endpoint->driver->name : "unbound");
+			if (command & PCI_COMMAND_MASTER) {
+				/* This experiment never permits endpoint bus mastering. */
+				pci_clear_master(endpoint);
+				ret = -EIO;
+			}
+			if (endpoint->driver)
+				ret = -EBUSY;
+		}
+		pci_dev_put(endpoint);
+		if (ret)
+			break;
+	}
+close_config:
+	if (ret)
+		WRITE_ONCE(pcie->neo_config_ready, false);
+	pci_unlock_rescan_remove();
+	if (!ret)
+		dev_info(pcie->dev, "NEO_ENUMERATION_ONLY_READY; functions0/1 unbound, bus mastering off\n");
+out:
+	pci_dev_put(root);
+	return ret;
+}
+
 static int apple_pcie_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -1850,6 +2020,7 @@ static int apple_pcie_probe(struct platform_device *pdev)
 	struct pci_host_bridge *bridge;
 	struct device_node *of_port;
 	struct apple_pcie *pcie;
+	struct device *piodma_supplier = NULL;
 	int ret;
 
 	hw = of_device_get_match_data(dev);
@@ -1874,6 +2045,12 @@ static int apple_pcie_probe(struct platform_device *pdev)
 		}
 	}
 
+	if (hw->root_bus_only && apple_piodma_bootstrap_enabled()) {
+		ret = apple_piodma_bootstrap_get(dev, &piodma_supplier);
+		if (ret)
+			return dev_err_probe(dev, ret, "PIODMA supplier unavailable\n");
+	}
+
 	bridge = devm_pci_alloc_host_bridge(dev, sizeof(*pcie));
 	if (!bridge)
 		return -ENOMEM;
@@ -1881,6 +2058,7 @@ static int apple_pcie_probe(struct platform_device *pdev)
 	pcie = pci_host_bridge_priv(bridge);
 	pcie->dev = dev;
 	pcie->hw = hw;
+	pcie->piodma_supplier = piodma_supplier;
 	if (hw->root_bus_only)
 		dev_info(dev, "root-port probe only; downstream config is blocked\n");
 	pcie->base = devm_platform_ioremap_resource(pdev, 1);
@@ -1914,6 +2092,15 @@ static int apple_pcie_probe(struct platform_device *pdev)
 	ret = devm_add_action_or_reset(dev, apple_pcie_cleanup, pcie);
 	if (ret)
 		return ret;
+
+	if (pcie->piodma_supplier) {
+		/* All fallible devres setup precedes publication of DMA pointers. */
+		ret = apple_pcie_neo_enumerate(bridge);
+		if (ret)
+			dev_err(dev, "enumeration experiment failed=%d; host/supplier retained, no retry\n",
+				ret);
+		return 0;
+	}
 
 	if (pcie->hw->tunneled) {
 		pci_walk_bus(bridge->bus, apple_pcie_tunnel_keep_d0, NULL);
