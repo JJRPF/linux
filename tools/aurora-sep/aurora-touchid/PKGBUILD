@@ -1,6 +1,6 @@
 # Maintainer: Chris Kearney <303316+iconidentify@users.noreply.github.com>
 pkgname=aurora-touchid
-pkgver=20261001
+pkgver=20261002
 pkgrel=1
 pkgdesc="Touch ID for Omarchy on Apple Silicon (aurora kernel SEP driver)"
 arch=('any')
@@ -13,7 +13,7 @@ source=('aurora-touchid-setup'
         'apple-sep.path'
         'fprintd-aurora.conf'
         'aurora-touchid.sleep')
-sha256sums=('ab4ed299d03462210e03e8d4152803a414204ebf25ec0f065b1b7dc3d43667b1'
+sha256sums=('45639372c72c3dc519e815ea7162165c1b3116f1b08102960e67a83c58bd742a'
             '2e1d50b5274223e107e4aa4f73de194f3a49d347be1edc93efd3f81b31b092cc'
             '4f7b8a97e35e3511afa482ee8aedd019e960b1a67320675bd347f534feab49c3'
             '2f4b265a4c2180a9e0e4926c53ec77c3dbb074ddc3e083d7925d58db10a576b9'

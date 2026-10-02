@@ -23,6 +23,9 @@
 # 11.21 adds Bluetooth recovery for the Broadcom PCIe controllers: a radio
 # wedged by an rfkill cycle under heavy traffic is reset on the next open, and
 # its calibration and address restored (aurora-silicon/linux#7).
+# 11.22 installs the VA-API bridge for the video decoder too, so players use
+# the hardware decoder instead of falling back to software, and
+# aurora-touchid-setup --help prints its usage instead of starting an enrolment.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -52,7 +55,7 @@ set -euo pipefail
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
 VERSION=7.1.12.aurora2-11.21
-TAG=sep-7.1.12.aurora2-11.21
+TAG=sep-7.1.12.aurora2-11.22
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -63,7 +66,7 @@ PACKAGES=(
   "linux-aurora-$VERSION-aarch64.pkg.tar.zst 0010d9572a4362d321e6431a32b1ad97a44afe70bd6c0771615d84090fa368ff"
   "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 69669048a7f2cdd1d970a4c02f63b76601e5c050a831287927a8ce1266a31f63"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
-  "aurora-touchid-20261001-1-any.pkg.tar.zst bc6438d23dc2aae2766677f41f3f6d61ec3716df55c3b7a9c2cf93a027c68660"
+  "aurora-touchid-20261002-1-any.pkg.tar.zst 7a2da780f909fce8c6b2e7f378de8a7f96ffc01c0601940cbf48a65e833f70c4"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
 )
 PINNED="linux-aurora linux-aurora-headers libfprint m1n1-aurora"
@@ -465,6 +468,10 @@ install_all() {
   # installs never needed; without it the decoder fails to load at boot.
   $sudo pacman -S --needed --noconfirm avd-fw ||
     warn "could not install avd-fw; hardware video decode will not work until it is installed"
+  # The VA-API bridge to that decoder. Without it, players fall back to
+  # software decode with no error (reported on a 16" M1 Pro).
+  $sudo pacman -S --needed --noconfirm libva-v4l2_request-avd ||
+    warn "could not install libva-v4l2_request-avd; video players will decode in software until it is installed"
   add_pin
   # Both boot chains boot through m1n1, and both need the aurora device trees
   # in boot.bin: update-m1n1 otherwise takes the DTBs of the highest-versioned

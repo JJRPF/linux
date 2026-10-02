@@ -55,10 +55,16 @@ remove_pam() {
   say "Fingerprint login removed. Enrolled prints stay in fprintd; delete them with: fprintd-delete $USER"
 }
 
-if [[ ${1:-} == --remove ]]; then
-  remove_pam
-  exit 0
-fi
+usage() {
+  sed -n '2,5s/^# \{0,1\}//p' "$0"
+}
+
+case ${1:-} in
+  "") ;;
+  --remove) remove_pam; exit 0 ;;
+  -h|--help) usage; exit 0 ;;
+  *) usage >&2; die "unknown option $1" ;;
+esac
 
 [[ -c /dev/sep-bio ]] || die "Touch ID is not available: /dev/sep-bio is missing.
 Reboot into the aurora kernel first, then check: systemctl status apple-sep.service"
