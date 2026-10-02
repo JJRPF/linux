@@ -469,9 +469,14 @@ install_all() {
   $sudo pacman -S --needed --noconfirm avd-fw ||
     warn "could not install avd-fw; hardware video decode will not work until it is installed"
   # The VA-API bridge to that decoder. Without it, players fall back to
-  # software decode with no error (reported on a 16" M1 Pro).
-  $sudo pacman -S --needed --noconfirm libva-v4l2_request-avd ||
-    warn "could not install libva-v4l2_request-avd; video players will decode in software until it is installed"
+  # software decode with no error (reported on a 16" M1 Pro installed from the
+  # Omarchy Mac ISO). Leave any other build of the bridge alone: the AUR
+  # libva-v4l2_request packages conflict with it.
+  if ! pacman -Qq libva-v4l2_request-avd libva-v4l2_request >/dev/null 2>&1 &&
+    [[ ! -e /usr/lib/dri/v4l2_request_drv_video.so ]]; then
+    $sudo pacman -S --needed --noconfirm libva-v4l2_request-avd ||
+      warn "could not install libva-v4l2_request-avd; video players will decode in software until it is installed"
+  fi
   add_pin
   # Both boot chains boot through m1n1, and both need the aurora device trees
   # in boot.bin: update-m1n1 otherwise takes the DTBs of the highest-versioned
