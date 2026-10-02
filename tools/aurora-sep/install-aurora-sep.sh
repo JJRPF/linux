@@ -35,6 +35,10 @@
 # 11.24 adds Touch ID on the MacBook Pro 14"/16" M1 Max and the MacBook Air 13"
 # M2, untested on both. On those boards the script first keeps the boot.bin the
 # Mac booted with on the EFI partition and prints how to restore it from macOS.
+# 11.25 adds the in-tree Apple Neural Engine driver (aurora-silicon/linux#155),
+# switched on for the M1 Max and M2 Max only, and the read-only SEP diagnostics
+# under /sys/bus/platform/devices/*.sep/diag/. When omarchy-ane-dkms is
+# installed the script says so: its modules take precedence over this kernel's.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -473,10 +477,24 @@ sep_write_notice() {
   return 0
 }
 
+# omarchy-ane-dkms builds its own Neural Engine modules into updates/dkms,
+# which modprobe prefers over the ones this kernel ships. Say so rather than
+# remove it: it also carries the M2 firmware fetch its owner may rely on.
+ane_dkms_notice() {
+  pacman -Q omarchy-ane-dkms >/dev/null 2>&1 || return 0
+  warn "omarchy-ane-dkms is installed. Its Neural Engine modules take precedence
+    over the driver built into this kernel, so a test would exercise that
+    package's driver instead. To test this kernel's driver, remove it first:
+      sudo pacman -R omarchy-ane-dkms
+    Removing it also removes the Neural Engine firmware it fetched on an M2
+    Pro/Max."
+}
+
 install_all() {
   local entry file sha kernel chain
   version_notice
   sep_write_notice
+  ane_dkms_notice
   kernel=$(current_kernel)
   chain=$(boot_chain)
   if [[ $chain == grub ]]; then boot_space "$kernel"; fi
@@ -784,6 +802,26 @@ SAFETY, NON-NEGOTIABLE
    the Mac woke and whether the finger unlocked it, and quote:
      sudo dmesg | grep -E 'Touch ID: ending|still running|PM: suspend'
    Re-check /dev/sep-bio, the display and the dock after resume.
+
+9. NEURAL ENGINE
+   This build carries the in-tree Apple Neural Engine driver
+   (aurora-silicon/linux#155), switched on only for the M1 Max and the M2 Max.
+   On every other Mac no Neural Engine lines are expected, and that is a pass.
+     pacman -Q omarchy-ane-dkms 2>/dev/null   # if installed, say so: its modules replace this kernel's
+     modinfo -F filename ane ane_t6021
+     ls -l /dev/accel/ 2>/dev/null
+     sudo dmesg | grep -iE '\bane\b|ane_t6021|neural' | head -40
+   M1 Max PASS: the ane module is bound, /dev/accel/accel0 exists, and the
+   module path is under kernel/drivers/accel/ane (not updates/dkms).
+   M2 Max: without the Neural Engine firmware, expect a firmware load error and
+   nothing else broken. With it (fetched by Joshua Warren's
+   omarchy-ane-firmware-fetch), expect ane_t6021 bound and /dev/accel/accel0.
+   If omarchy-ane's tools are installed, also run omarchy-ane-check, and on an
+   M2 Max omarchy-ane-check --smoke; quote their result lines.
+   Report any kernel log line at emergency or alert level, and whether idle
+   battery drain changed against the previous build. If the Mac does not finish
+   booting, add module_blacklist=ane,ane_t6021 to the kernel command line from
+   the boot menu, and report that.
 
    Report "not tested" honestly rather than guessing, for any of the above.
 
