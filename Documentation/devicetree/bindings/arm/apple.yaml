@@ -435,15 +435,6 @@ properties:
           - const: apple,t6032
           - const: apple,arm-platform
 
-  aurora,minimal-boot:
-    type: boolean
-    description:
-      Request a minimal native RAM boot from the Aurora m1n1 loader. Skip
-      generic PCIe and DAPF initialization and the legacy EL2 Apple Device
-      Tree handoff. The loader still supplies the Linux flattened device
-      tree, usable memory, reserved regions and CPU release addresses.
-      Used during initial J813 bring-up without DMA peripherals.
-
 additionalProperties: true
 
 ...

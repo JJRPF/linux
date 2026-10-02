@@ -29,9 +29,9 @@ loader is not sufficient. Before entering Linux, the loader must:
 * Fill CPU release addresses and remove CPUs which have not been started.
 * Fill the firmware framebuffer's address, size, geometry and format before
   enabling it.
-* Recognize ``aurora,minimal-boot`` and skip generic PCIe/DAPF initialization
-  and the legacy EL2 Apple Device Tree handoff. These paths touch unsupported
-  resources in the initial T8142 boot stack.
+* Prepare DMA protection only for devices enabled in the supplied FDT. The
+  initial tree exposes no AOP, MTP, PMP or ISP DMA consumers. Their firmware
+  protection state must remain intact during the native FDT handoff.
 * Leave the console, interrupt controller and display powered. This minimal
   DT does not describe their power domains.
 * Give U-Boot a T8142 memory map covering its MMIO and high DRAM addresses.
