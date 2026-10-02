@@ -19,7 +19,7 @@ extern "C" {
     // struct in some configurations, which Rust does not accept across FFI.
     fn sep_diag_register(
         dev: *mut c_void,
-        profile: *const u8,
+        profile: *const c_char,
         profile_len: usize,
         cold: bool,
         sepos13: bool,
@@ -29,7 +29,8 @@ extern "C" {
     fn sep_diag_set_endpoints(count: c_uint);
     fn sep_diag_set_keystore_open();
     fn sep_diag_set_keybag(state: c_int);
-    fn sep_diag_set_sensor_result(online: bool);
+    fn sep_diag_sensor_bind() -> c_uint;
+    fn sep_diag_set_sensor_result(bind: c_uint, online: bool);
     fn sep_diag_set_bio_published();
     fn sep_diag_set_touchid(started: bool);
     fn sep_diag_bringup_ended();
@@ -50,14 +51,24 @@ pub(crate) fn register(
     profile: &profile::PlatformProfile,
     xart_writable: bool,
 ) -> Result {
-    let cold = profile.bootstrap == profile::Bootstrap::Boot;
-    let sepos13 = matches!(profile.key_store, profile::KeyStore::Sepos13 { .. });
+    // Exhaustive, so a new bootstrap or key store fails to build here until
+    // the ABI has a value for it.
+    let cold = match profile.bootstrap {
+        profile::Bootstrap::Boot => true,
+        profile::Bootstrap::WarmRegister => false,
+    };
+    let sepos13 = match profile.key_store {
+        profile::KeyStore::Sepos13 { .. } => true,
+        profile::KeyStore::Variant5 => false,
+    };
     // SAFETY: `dev` is bound for the duration of the call, which is what devres
-    // needs; the shim copies the name and keeps no pointer to it.
+    // needs. `profile.name` is a `str`, valid for reads of `profile.name.len()`
+    // bytes; the shim copies at most that many, needs no NUL terminator, and
+    // keeps no pointer to it.
     let ret = unsafe {
         sep_diag_register(
             dev.as_raw().cast(),
-            profile.name.as_ptr(),
+            profile.name.as_ptr().cast::<c_char>(),
             profile.name.len(),
             cold,
             sepos13,
@@ -88,10 +99,21 @@ pub(crate) fn keybag(state: Keybag) {
     unsafe { sep_diag_set_keybag(state as c_int) };
 }
 
+/// Which bind of the sensor a bring-up ran against.
+#[derive(Clone, Copy)]
+pub(crate) struct SensorBind(c_uint);
+
+/// Taken as a sensor bring-up begins, so that its result is dropped if the
+/// sensor has been unbound or bound again by the time it finishes.
+pub(crate) fn sensor_bind() -> SensorBind {
+    // SAFETY: no preconditions; loads one word.
+    SensorBind(unsafe { sep_diag_sensor_bind() })
+}
+
 /// The result of a sensor bring-up, attach-time or later.
-pub(crate) fn sensor_brought_up(online: bool) {
-    // SAFETY: no preconditions; stores one word.
-    unsafe { sep_diag_set_sensor_result(online) };
+pub(crate) fn sensor_brought_up(bind: SensorBind, online: bool) {
+    // SAFETY: no preconditions; updates one word.
+    unsafe { sep_diag_set_sensor_result(bind.0, online) };
 }
 
 pub(crate) fn bio_published() {

@@ -1068,16 +1068,17 @@ impl SepData {
             );
             return;
         }
+        let bind = diag::sensor_bind();
         let Some(patch) = self.wake_sensor() else {
             dev_warn!(
                 self.dev,
                 "sbio: the sensor did not wake at attach; the next verify retries the bring-up\n"
             );
-            diag::sensor_brought_up(false);
+            diag::sensor_brought_up(bind, false);
             return;
         };
         let online = self.complete_bringup(patch);
-        diag::sensor_brought_up(online);
+        diag::sensor_brought_up(bind, online);
         if !online {
             dev_warn!(
                 self.dev,
@@ -1087,26 +1088,27 @@ impl SepData {
     }
 
     fn bring_sensor_online(&self) -> bool {
+        let bind = diag::sensor_bind();
         let Some(mut patch) = self.wake_sensor() else {
-            diag::sensor_brought_up(false);
+            diag::sensor_brought_up(bind, false);
             return false;
         };
 
         if !self.sensor_calibrated.load(Relaxed) {
             if !self.calibrate_sensor() {
-                diag::sensor_brought_up(false);
+                diag::sensor_brought_up(bind, false);
                 return false;
             }
             self.sensor_calibrated.store(true, Relaxed);
             let Some(reloaded_patch) = self.wake_sensor() else {
-                diag::sensor_brought_up(false);
+                diag::sensor_brought_up(bind, false);
                 return false;
             };
             patch = reloaded_patch;
         }
 
         let ok = self.complete_bringup(patch);
-        diag::sensor_brought_up(ok);
+        diag::sensor_brought_up(bind, ok);
         // The sensor is patched and idle here -- the only safe moment to
         // configure the data-ready interrupt, which is then left alone for the
         // driver's life. Interrupt capture is the default; a machine that does

@@ -87,13 +87,19 @@ Description:
 		(RO) Whether the SEP answered the driver's attach.
 
 		========	=============================================
-		pending		No outcome yet. It stays so if the SEP never
-				answers at all.
+		pending		No outcome yet.
 		attached	The SEP advertised at least one endpoint.
 		failed		The SEP advertised no endpoint; the xART
 				exchange and the key store cannot run this
 				boot.
 		========	=============================================
+
+		The driver decides once about three seconds have passed
+		without an endpoint and the SEP has gone quiet. With boot
+		"warm" that wait starts at probe, so a SEP that never answers
+		ends in "failed". With boot "cold" it starts at the first
+		message from the SEP, so a SEP that never answers the boot
+		request leaves this at "pending" for the rest of the boot.
 
 What:		/sys/bus/platform/devices/<unit>.sep/diag/endpoints
 Date:		October 2026
@@ -126,21 +132,24 @@ Date:		October 2026
 KernelVersion:	7.1
 Contact:	Chris Kearney <chris@kearneymail.com>
 Description:
-		(RO) The identity keybag that Touch ID uses. With
-		provision_keybag=1, the default, the boot-time bring-up
-		decides it once the key store is open; otherwise it stays
-		"unknown" until Touch ID is activated, which loads the
-		keybag and updates this value. It also stays "unknown" if
-		the key store never opens.
+		(RO) The identity keybag that Touch ID uses.
 
 		=======	==============================================
 		unknown	Not determined yet.
-		present	An identity keybag is usable: one was already
-			persisted or was provisioned during the bring-up,
-			or Touch ID activation loaded it.
+		present	An identity keybag exists: one was already
+			persisted, or the bring-up created one. This does
+			not say that it loads; Touch ID activation loads
+			it, and changes this to "failed" if that fails.
 		missing	None is persisted and none was provisioned.
 		failed	Provisioning, reading or loading it failed.
 		=======	==============================================
+
+		With provision_keybag=1, the default, the boot-time bring-up
+		decides it once the key store is open, and it stays
+		"unknown" if the key store never opens. With
+		provision_keybag=0, Touch ID activation decides it when it
+		reads the keybag, and it stays "unknown" if activation fails
+		before that point.
 
 What:		/sys/bus/platform/devices/<unit>.sep/diag/sensor
 Date:		October 2026
@@ -175,12 +184,27 @@ Description:
 		ready		/dev/sep-bio is published, Touch ID was
 				activated, and the most recent sensor
 				bring-up succeeded.
-		not-ready	Finished without that: the bring-up ended
-				without publishing /dev/sep-bio, activation
-				failed (it is not retried this boot), or
-				the most recent sensor bring-up did not
-				succeed.
+		not-ready	Touch ID was activated, but the sensor is not
+				online: it is not bound, has not been brought
+				up since it bound, or its most recent
+				bring-up failed. A later bring-up, which
+				each enrol and verify runs, can still make
+				it ready.
+		failed		Touch ID cannot work this boot: the bring-up
+				ended without publishing /dev/sep-bio, or
+				activation failed. Neither is retried before
+				the next boot.
 		=========	============================================
+
+		"failed" can be intentional. With provision_keybag=0, as on
+		a read-only install (xart_writes=0, provision_keybag=0), the
+		bring-up still publishes /dev/sep-bio when no identity
+		keybag exists yet, and its first open then fails activation
+		because there is none: keybag reads "missing" and touchid
+		reads "failed". Read touchid "failed" together with keybag
+		"missing" (and, on a read-only install, xart "disabled") as
+		not provisioned rather than broken. Every other way to reach
+		"failed" is a real failure.
 
 		Because the first open of /dev/sep-bio activates Touch ID, a
 		tool waiting for "ready" has to open it, or let its client

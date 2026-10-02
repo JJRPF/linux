@@ -33,14 +33,24 @@
 #define SEP_DIAG_KEYSTORE_OPEN		1
 #define SEP_DIAG_KEYSTORE_CLOSED	2
 
-/* The last bring-up of the bound sensor; reset when a sensor binds. */
-#define SEP_DIAG_SENSOR_UNTRIED		0
-#define SEP_DIAG_SENSOR_ONLINE		1
-#define SEP_DIAG_SENSOR_FAILED		2
+/*
+ * The sensor's state in the low bits and a count of its binds above them, in
+ * one word. A reader racing a re-bind sees the old device's state or the new
+ * one's, never a mix, and a bring-up that began before the sensor was unbound
+ * or bound again cannot report its result against the device bound since.
+ */
+#define SEP_DIAG_SENSOR_UNBOUND		0U
+#define SEP_DIAG_SENSOR_BOUND		1U
+#define SEP_DIAG_SENSOR_ONLINE		2U
+#define SEP_DIAG_SENSOR_FAILED		3U
+#define SEP_DIAG_SENSOR_STATE		3U
+#define SEP_DIAG_SENSOR_BIND		4U
 
 /*
  * Touch ID is activated by the first open of /dev/sep-bio, not by the boot-time
  * bring-up, so publishing the node leaves the outcome undecided until then.
+ * UNAVAILABLE and FAILED are final for the boot; STARTED is not, since a later
+ * sensor bring-up can still bring the sensor online.
  */
 #define SEP_DIAG_TOUCHID_PENDING	0
 #define SEP_DIAG_TOUCHID_PUBLISHED	1
@@ -59,15 +69,13 @@ static struct {
 	atomic_t endpoints;
 	atomic_t keystore;
 	atomic_t keybag;
-	atomic_t sensor_bound;
-	atomic_t sensor_result;
+	atomic_t sensor;
 	atomic_t touchid;
 } sep_diag;
 
-static bool sep_diag_sensor_online(void)
+static unsigned int sep_diag_sensor(void)
 {
-	return atomic_read(&sep_diag.sensor_bound) &&
-	       atomic_read(&sep_diag.sensor_result) == SEP_DIAG_SENSOR_ONLINE;
+	return (unsigned int)atomic_read(&sep_diag.sensor) & SEP_DIAG_SENSOR_STATE;
 }
 
 static ssize_t abi_show(struct device *dev, struct device_attribute *attr,
@@ -183,17 +191,22 @@ static DEVICE_ATTR_RO(keybag);
 static ssize_t sensor_show(struct device *dev, struct device_attribute *attr,
 			   char *buf)
 {
-	int result = atomic_read(&sep_diag.sensor_result);
 	const char *state;
 
-	if (!atomic_read(&sep_diag.sensor_bound))
-		state = "unbound";
-	else if (result == SEP_DIAG_SENSOR_ONLINE)
-		state = "online";
-	else if (result == SEP_DIAG_SENSOR_FAILED)
-		state = "failed";
-	else
+	switch (sep_diag_sensor()) {
+	case SEP_DIAG_SENSOR_BOUND:
 		state = "bound";
+		break;
+	case SEP_DIAG_SENSOR_ONLINE:
+		state = "online";
+		break;
+	case SEP_DIAG_SENSOR_FAILED:
+		state = "failed";
+		break;
+	default:
+		state = "unbound";
+		break;
+	}
 	return sysfs_emit(buf, "%s\n", state);
 }
 static DEVICE_ATTR_RO(sensor);
@@ -205,11 +218,12 @@ static ssize_t touchid_show(struct device *dev, struct device_attribute *attr,
 
 	switch (atomic_read(&sep_diag.touchid)) {
 	case SEP_DIAG_TOUCHID_STARTED:
-		state = sep_diag_sensor_online() ? "ready" : "not-ready";
+		state = sep_diag_sensor() == SEP_DIAG_SENSOR_ONLINE ?
+			"ready" : "not-ready";
 		break;
 	case SEP_DIAG_TOUCHID_UNAVAILABLE:
 	case SEP_DIAG_TOUCHID_FAILED:
-		state = "not-ready";
+		state = "failed";
 		break;
 	default:
 		state = "unknown";
@@ -277,17 +291,48 @@ void sep_diag_set_keybag(int state)
 	atomic_set(&sep_diag.keybag, state);
 }
 
+/*
+ * Called from the SPI probe and remove of the one sensor device, which the
+ * driver core never runs concurrently. A bring-up result racing this store is
+ * either overwritten by it or, arriving later, refused by the bind check below.
+ */
 void sep_diag_set_sensor_bound(bool bound)
 {
+	unsigned int binds = (unsigned int)atomic_read(&sep_diag.sensor) &
+			     ~SEP_DIAG_SENSOR_STATE;
+
 	if (bound)
-		atomic_set(&sep_diag.sensor_result, SEP_DIAG_SENSOR_UNTRIED);
-	atomic_set(&sep_diag.sensor_bound, bound);
+		atomic_set(&sep_diag.sensor,
+			   (binds + SEP_DIAG_SENSOR_BIND) | SEP_DIAG_SENSOR_BOUND);
+	else
+		atomic_set(&sep_diag.sensor, binds | SEP_DIAG_SENSOR_UNBOUND);
 }
 
-void sep_diag_set_sensor_result(bool online)
+/* Taken as a bring-up begins and handed back with its result. */
+unsigned int sep_diag_sensor_bind(void)
 {
-	atomic_set(&sep_diag.sensor_result,
-		   online ? SEP_DIAG_SENSOR_ONLINE : SEP_DIAG_SENSOR_FAILED);
+	return (unsigned int)atomic_read(&sep_diag.sensor) &
+	       ~SEP_DIAG_SENSOR_STATE;
+}
+
+void sep_diag_set_sensor_result(unsigned int bind, bool online)
+{
+	unsigned int state = online ? SEP_DIAG_SENSOR_ONLINE :
+				      SEP_DIAG_SENSOR_FAILED;
+	int old = atomic_read(&sep_diag.sensor);
+
+	do {
+		unsigned int word = old;
+
+		/*
+		 * With no device bound, "unbound" is the cause worth showing;
+		 * after a re-bind, the result belongs to the previous device.
+		 */
+		if ((word & SEP_DIAG_SENSOR_STATE) == SEP_DIAG_SENSOR_UNBOUND ||
+		    (word & ~SEP_DIAG_SENSOR_STATE) != bind)
+			return;
+	} while (!atomic_try_cmpxchg(&sep_diag.sensor, &old,
+				     (old & ~SEP_DIAG_SENSOR_STATE) | state));
 }
 
 /*
