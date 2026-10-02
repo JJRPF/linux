@@ -70,6 +70,7 @@ struct ane_bo {
 static struct ane_bo *bo_lookup(struct drm_file *file, u32 handle)
 {
 	struct drm_gem_object *gem = drm_gem_object_lookup(file, handle);
+
 	if (!gem)
 		return NULL;
 	return to_bo(gem);
@@ -130,7 +131,8 @@ retry:
 			 * unmap. Clear it once and retry instead of
 			 * poisoning every later BO_INIT until reload
 			 * (m1-test-host 2026-09-25: dart_init_pte -EEXIST at
-			 * 0x4000 for the rest of the session). */
+			 * 0x4000 for the rest of the session).
+			 */
 			if (err == -EEXIST && !healed &&
 			    iommu_iova_to_phys(ane->domain, iova)) {
 				dev_warn(ane->dev,
@@ -228,7 +230,8 @@ static void ane_preserve_bo(struct ane_device *ane, struct ane_bo *bo)
 	p = kzalloc(sizeof(*p), GFP_KERNEL);
 	if (!p) {
 		/* Fail closed the old way: the node stays inserted and the
-		 * pages leak until reboot - safe, just unreclaimable. */
+		 * pages leak until reboot - safe, just unreclaimable.
+		 */
 		dev_err(ane->dev, "wedged: preserve registry full, leaking\n");
 		bo->mm = NULL;
 		bo->pages = NULL;
@@ -325,7 +328,8 @@ static void ane_gem_free_object(struct drm_gem_object *gem)
 			 * until recovery quiesces the engine and reclaims
 			 * it, so no later BO_INIT can map over these PTEs
 			 * (a leaked-but-forgotten mapping is what turned
-			 * into dart_init_pte -EEXIST WARNs on m1-test-host). */
+			 * into dart_init_pte -EEXIST WARNs on m1-test-host).
+			 */
 			dev_err(ane->dev, "wedged: preserving bo mapping\n");
 			list_del_init(&bo->node);
 			ane_preserve_bo(ane, bo);
@@ -445,7 +449,8 @@ static int ane_bo_free(struct drm_device *drm, void *data,
 		return -EINVAL;
 
 	/* Keep reference drops outside engine_lock: the final put enters
-	 * ane_gem_free_object(), which owns that lock while unmapping. */
+	 * ane_gem_free_object(), which owns that lock while unmapping.
+	 */
 	drm_gem_handle_delete(file, args->handle);
 	drm_gem_object_put(&bo->base);
 	return 0;
@@ -571,7 +576,8 @@ static ssize_t wedged_show(struct device *dev, struct device_attribute *attr,
 static DEVICE_ATTR_RO(wedged);
 
 /* Operator retry for a wedge whose automatic recovery failed: one more
- * bounded power-cycle attempt. No-op when not wedged. */
+ * bounded power-cycle attempt. No-op when not wedged.
+ */
 static ssize_t reset_store(struct device *dev, struct device_attribute *attr,
 			   const char *buf, size_t count)
 {
@@ -601,7 +607,8 @@ static int ane_drm_open(struct drm_device *drm, struct drm_file *file)
 	int err;
 
 	/* Bring up power while the file context is created. A failed
-	 * resume propagates; nothing is released that was not acquired. */
+	 * resume propagates; nothing is released that was not acquired.
+	 */
 	err = pm_runtime_resume_and_get(ane->dev);
 	if (err < 0)
 		return err;
@@ -640,7 +647,8 @@ static void ane_drm_postclose(struct drm_device *drm, struct drm_file *file)
 	 * operator cannot unload the ko for an updated build without a
 	 * reboot. ane_wedge_clear releases both the wedged flag and the
 	 * module_refcount; ane_tm_recover then attempts a power-cycle
-	 * recovery (succeeds only if the engine is actually idle-able). */
+	 * recovery (succeeds only if the engine is actually idle-able).
+	 */
 	ane_wedge_clear(ane);
 	ane_tm_recover(ane);
 
@@ -675,7 +683,8 @@ static long ane_drm_unlocked_ioctl(struct file *file, unsigned int cmd,
 	 * *type*. The type byte lives at offset _IOC_TYPESHIFT (8). Use
 	 * _IOC_TYPE(cmd) to extract the right field; misuse here returns
 	 * -ENOTTY for every legitimate ane_ioctl, which is exactly the
-	 * regression committed and reverted in the lifecycle-reset series. */
+	 * regression committed and reverted in the lifecycle-reset series.
+	 */
 	if (_IOC_TYPE(cmd) != DRM_IOCTL_BASE ||
 	    (_IOC_NR(cmd) < DRM_COMMAND_BASE &&
 	     _IOC_NR(cmd) != _IOC_NR(DRM_IOCTL_VERSION)) ||
@@ -765,6 +774,7 @@ static int ane_iommu_domain_init(struct ane_device *ane)
 	u64 min_iova, limit;
 
 	struct iommu_domain *domain = iommu_get_domain_for_dev(ane->dev);
+
 	if (!domain)
 		return -EPROBE_DEFER;
 
@@ -902,7 +912,8 @@ struct ane_soc {
 	phys_addr_t ps_base;
 	enum ane_qual qual;
 	/* True when the tm/tq register file survives a genpd cycle in
-	 * retention and recovery must drain it (see ane_tm_drain_retained). */
+	 * retention and recovery must drain it (see ane_tm_drain_retained).
+	 */
 	bool tm_retention;
 };
 
@@ -913,14 +924,16 @@ MODULE_PARM_DESC(allow_unqualified,
 
 static const struct ane_soc ane_soc_t8103 = {
 	/* M1 (m1-test-host). SET block mapped read-only for the recovery ACTUAL
-	 * log and the powered-on guard. Execution proven in the fleet. */
+	 * log and the powered-on guard. Execution proven in the fleet.
+	 */
 	.ps_base = 0x23b70c000ULL,
 	.qual = ANE_QUALIFIED,
 };
 
 static const struct ane_soc ane_soc_t6000 = {
 	/* M1 Pro, M1 Max and M1 Ultra die 0 share this compatible and SET base
-	 * (proven on T6001/t6001-test-host); M1 Pro and M1 Ultra are untested. */
+	 * (proven on T6001/t6001-test-host); M1 Pro and M1 Ultra are untested.
+	 */
 	.ps_base = 0x28e08c000ULL,
 	.qual = ANE_QUALIFIED,
 	.tm_retention = true,
@@ -929,7 +942,8 @@ static const struct ane_soc ane_soc_t6000 = {
 static const struct ane_soc ane_soc_t6020 = {
 	/* M2 Pro (t6020). Community device-tree captures exist, but the
 	 * SET base is unproven and the H14 compiler backend is unqualified:
-	 * no constants may enter here yet. */
+	 * no constants may enter here yet.
+	 */
 	.ps_base = 0,
 	.qual = ANE_UNSUPPORTED,
 };
@@ -946,7 +960,8 @@ static const struct ane_soc ane_soc_t6021 = {
 	 * capture cannot see it) is unverified; the first probe resume
 	 * logs the ACTUAL nibbles through this window as the Linux-side
 	 * probe (receipt 2026-09-18-t6021-driver-entry-prepared.md).
-	 * Promotion to ANE_QUALIFIED needs an exact run on this silicon. */
+	 * Promotion to ANE_QUALIFIED needs an exact run on this silicon.
+	 */
 	.ps_base = 0x28e08c000ULL,
 	.qual = ANE_RECOGNIZED,
 };
@@ -971,7 +986,8 @@ static int ane_platform_probe(struct platform_device *pdev)
 	int err;
 
 	/* Tier gate before any power-domain, MMIO or IRQ interaction: an
-	 * unqualified SoC must fail cleanly, never half-probe. */
+	 * unqualified SoC must fail cleanly, never half-probe.
+	 */
 	if (soc->qual == ANE_UNSUPPORTED) {
 		dev_err(dev,
 			"%s: unsupported ANE: no proven SET-block base (a guessed base external-aborts the SoC); not binding. To advance this port, run the mlx-omarchy quick collector (scripts/collect_quick.py: captures ANE/DART/PMGR/AIC device-tree data, no driver needed) and submit the capture\n",
@@ -1003,7 +1019,8 @@ static int ane_platform_probe(struct platform_device *pdev)
 	ane->tm_retention = soc->tm_retention;
 
 	/* Managed power first: genpd links hold the ANE/DART supplier
-	 * topology awake before any register is touched. */
+	 * topology awake before any register is touched.
+	 */
 	err = ane_attach_genpd(ane);
 	if (err < 0) {
 		dev_err(dev, "failed to attach power domains\n");
@@ -1017,7 +1034,8 @@ static int ane_platform_probe(struct platform_device *pdev)
 	}
 	/* Polled completion design: the engine IRQ is validated but never
 	 * requested here. A DART fault IRQ stays owned by apple-dart. During
-	 * a job this driver masks it, and on a fault restores that stream. */
+	 * a job this driver masks it, and on a fault restores that stream.
+	 */
 
 	/* Mapping only; no register access happens while unpowered. */
 	ane->engine = devm_platform_ioremap_resource_byname(pdev, "engine");
@@ -1031,7 +1049,8 @@ static int ane_platform_probe(struct platform_device *pdev)
 	 * base (see the tier table above). Mapped read-only, always:
 	 * recovery logs its ACTUAL nibbles beside every engine write and
 	 * refuses engine MMIO unless the islands read powered on. Unmapped
-	 * is tolerated: recovery then just skips the check. */
+	 * is tolerated: recovery then just skips the check.
+	 */
 	ane->ps_base = soc->ps_base;
 	if (ane->ps_base)
 		ane->ps = devm_ioremap(dev, ane->ps_base, 0x38);
@@ -1130,7 +1149,8 @@ static int __maybe_unused ane_runtime_suspend(struct device *dev)
 	/* Veto gating while the engine may be DMA-active: there is no
 	 * documented abort/reset to establish quiescence first -- except
 	 * when recovery is power-cycling a wedged engine to establish
-	 * exactly that quiescence. */
+	 * exactly that quiescence.
+	 */
 	if (atomic_read(&ane->wedged) && !ane->recovering)
 		return -EBUSY;
 
@@ -1144,14 +1164,16 @@ static int __maybe_unused ane_runtime_resume(struct device *dev)
 
 	/* The only path that touches the engine while its partition comes
 	 * up: probe's first resume and every later ungate land here. Every
-	 * translation is owned by the IOMMU providers. */
+	 * translation is owned by the IOMMU providers.
+	 */
 	if (first) {
 		/* Bisect order, each stage named before it runs: genpd
 		 * raise is already complete when this callback runs; the
 		 * SET window reads come first (pmgr class, always safe
 		 * per T6001/T8103 bisect evidence), then the engine. A
 		 * hard reset after the last off-box line names the
-		 * killing access exactly (T6021 console bring-up). */
+		 * killing access exactly (T6021 console bring-up).
+		 */
 		struct resource *eng = platform_get_resource_byname(
 			to_platform_device(dev), IORESOURCE_MEM, "engine");
 
@@ -1167,7 +1189,8 @@ static int __maybe_unused ane_runtime_resume(struct device *dev)
 	ane_tm_enable(ane, first);
 
 	/* First enable is the engine's fresh signature; recovery compares
-	 * its post-reset status against it. */
+	 * its post-reset status against it.
+	 */
 	if (!ane->tm_status_known) {
 		dev_info(dev, "ANE-resume: enable writes survived; TM_STATUS read next\n");
 		ane->tm_status_fresh = ane_tm_status(ane);
@@ -1176,7 +1199,8 @@ static int __maybe_unused ane_runtime_resume(struct device *dev)
 		 * the SoC descriptor's SET window while the partition is
 		 * raised. 0xffffff means the mapped window is the live
 		 * pmgr SET block with every word on; anything else names
-		 * the t6021 word layout to fix before promotion. */
+		 * the t6021 word layout to fix before promotion.
+		 */
 		dev_info(dev, "ANERD ps probe act=%#x\n", ane_ps_act(ane));
 	}
 
@@ -1188,18 +1212,18 @@ static const struct dev_pm_ops ane_pm_ops = {
 	SET_RUNTIME_PM_OPS(ane_runtime_suspend, ane_runtime_resume, NULL)
 	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
 };
+
 // clang-format on
 
 static struct platform_driver ane_platform_driver = {
-    .probe  = ane_platform_probe,
-    .remove = ane_platform_remove,
-    .driver =
-	{
-	    .name	    = "ane",
-	    .suppress_bind_attrs = true,
-	    .dev_groups     = ane_dev_groups,
-	    .pm             = pm_ptr(&ane_pm_ops),
-	    .of_match_table = ane_of_match,
+	.probe = ane_platform_probe,
+	.remove = ane_platform_remove,
+	.driver = {
+		.name = "ane",
+		.suppress_bind_attrs = true,
+		.dev_groups = ane_dev_groups,
+		.pm = pm_ptr(&ane_pm_ops),
+		.of_match_table = ane_of_match,
 	},
 };
 

@@ -24,7 +24,8 @@
 
 /* FWIM surface size = config+0x138 byte-count = 0x500000 (Main
  * 2026-09-20, audit 751caa4, T6021). Covers the selene vmsize 0x4fc000
- * and the bia vmsize 0x4ec000; NOT derivable from the blob length. */
+ * and the bia vmsize 0x4ec000; NOT derivable from the blob length.
+ */
 #define ANE_FW_BUF_SIZE		0x500000
 #define ANE_FW_ENTRY_PC		0x0
 
@@ -53,7 +54,8 @@ struct ane_fw_seg {
  * addresses: the __rtk_patch records _rtk_stack_guard, RTK_soc,
  * RTK_soc_revision, RTK_cpu_physical_address and
  * RTK_cpu_wrapper_physical_address, then the type-1
- * __rtk_platform_asc_tunables_block. */
+ * __rtk_platform_asc_tunables_block.
+ */
 struct ane_fw_image {
 	const char *name;		/* request_firmware() path */
 	u8 sha256[32];
@@ -99,7 +101,8 @@ static const struct ane_fw_image ane_fw_bia = {
 
 /* Validate a candidate payload against image FW.  Returns 0 on pass,
  * else -1 with *reason set.  actual_sha = caller-computed SHA-256 of
- * blob. */
+ * blob.
+ */
 static inline int
 ane_fw_validate_blob(const u8 *blob, size_t size,
 		     const struct ane_fw_image *fw, const u8 actual_sha[32],
@@ -196,7 +199,8 @@ ane_fw_validate_blob(const u8 *blob, size_t size,
 			u32 p = off + 8;
 
 			/* thread commands: flavor u32, count u32
-			 * (count = number of 32-bit words in state) */
+			 * (count = number of 32-bit words in state)
+			 */
 			while (p + 8 <= off + cmdsize) {
 				u32 flavor = get_unaligned_le32(blob + p);
 				u32 count = get_unaligned_le32(blob + p + 4);
@@ -207,7 +211,8 @@ ane_fw_validate_blob(const u8 *blob, size_t size,
 				}
 				if (flavor == ARM_THREAD_STATE64) {
 					/* 33 u64 registers; PC at index 32:
-					 * requires count*4 >= 33*8 bytes */
+					 * requires count*4 >= 33*8 bytes
+					 */
 					if (count < 66 ||
 					    p + 8 + count * 4 > off + cmdsize) {
 						*reason = "thread state too small for pc";
@@ -282,7 +287,8 @@ struct ane_asc_tunables {
  * 0x150010 record) then type-3 key 0x10 (the rest), which is the T6021
  * capture block byte for byte (header key 0x10). 25G83 adds key 0x11;
  * the capture (RTK_soc_revision 0x11, block key 0x10) shows 13.5 has
- * none, so it is left out. */
+ * none, so it is left out.
+ */
 static const struct ane_asc_tunables ane_t602x_asc_tunables = {
 	.keys = { 0x10, 0x01, 0x00 },
 	.nkeys = 3,
@@ -316,7 +322,8 @@ static const struct ane_asc_tunables ane_t602x_asc_tunables = {
 };
 
 /* T6020: j414s/j416s 25G83, one type-1 entry, key 0x00. The offsets of
- * T6021; 13 values differ. */
+ * T6021; 13 values differ.
+ */
 static const struct ane_asc_tunables ane_t6020_asc_tunables = {
 	.keys = { 0x00 },
 	.nkeys = 1,
@@ -350,7 +357,8 @@ static const struct ane_asc_tunables ane_t6020_asc_tunables = {
 };
 
 /* T8112: j413/j415/j473/j493 25G83, one type-1 table under keys 0x10
- * and 0x00, no type-3 entry. The T6021 offsets without 0x150010. */
+ * and 0x00, no type-3 entry. The T6021 offsets without 0x150010.
+ */
 static const struct ane_asc_tunables ane_t8112_asc_tunables = {
 	.keys = { 0x10, 0x00 },
 	.nkeys = 2,
@@ -384,7 +392,8 @@ static const struct ane_asc_tunables ane_t8112_asc_tunables = {
 
 /* T8112 RTK_soc_revision from its two eFuse words at 0x23d2c8060, as
  * iBootStage2 25G83 j413 0x40270 (and j415/j473/j493) computes it:
- * bits 2:0 = w0[29:27], bits 6:4 = {w1[0], w0[31:30]}. */
+ * bits 2:0 = w0[29:27], bits 6:4 = {w1[0], w0[31:30]}.
+ */
 static inline u32 ane_t8112_fuse_revision(u32 w0, u32 w1)
 {
 	return ((w0 >> 27) & 7) | ((((w0 >> 30) | (w1 << 2)) & 7) << 4);
@@ -410,7 +419,8 @@ static inline void ane_fw_put_le(u8 *p, u64 v, unsigned int n)
 /* Patch the staged image FW in place (vm-indexed, at least
  * ANE_FW_BUF_SIZE bytes). Every precondition is checked before the first
  * write, so a refusal leaves the image untouched. Returns 0, or -1 with
- * *reason set. */
+ * *reason set.
+ */
 static inline int
 ane_fw_apply_boot_patches(u8 *img, const struct ane_fw_image *fw,
 			  const struct ane_asc_tunables *t,

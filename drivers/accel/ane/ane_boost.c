@@ -81,7 +81,8 @@ static void ane_boost_off_work(struct work_struct *work)
 
 	mutex_lock(&b->lock);
 	/* A submit that began or ended after this expiry was armed keeps
-	 * the boost on; its own completion re-arms the drop. */
+	 * the boost on; its own completion re-arms the drop.
+	 */
 	if (b->on && !b->busy &&
 	    time_after_eq(jiffies, b->last_end + msecs_to_jiffies(boost_idle_ms)))
 		ane_boost_set(ane, false);

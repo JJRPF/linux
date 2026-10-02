@@ -142,14 +142,16 @@
 #include "ane_t6021_boot.h"
 
 /* Retain the firmware nap-prevention counter via the init resource bit
- * (lab boot_prevent_nap=1, the proven add-path value). */
+ * (lab boot_prevent_nap=1, the proven add-path value).
+ */
 static bool boot_prevent_nap = true;
 module_param(boot_prevent_nap, bool, 0444);
 MODULE_PARM_DESC(boot_prevent_nap,
 		 "Retain firmware nap-prevention counter via init resource bit (default on: proven add-path value)");
 
 /* This object links into both ane_t6021.ko and ane_t6021_rtclient.ko;
- * per-object metadata keeps modpost happy for either composition. */
+ * per-object metadata keeps modpost happy for either composition.
+ */
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_DESCRIPTION("T6021 ANE contract-pinned boot sequence core");
 
@@ -160,13 +162,15 @@ MODULE_DESCRIPTION("T6021 ANE contract-pinned boot sequence core");
  * 2026-09-20: no partial boot; remaining semantics stay hard gates,
  * not comments). Each flips only with cited proof in a Main-reviewed
  * commit that also populates the sources and adds the kernel io
- * backend — never a runtime knob. */
+ * backend — never a runtime knob.
+ */
 /* Provider equivalence — CLOSED (Main provider review 2026-09-20):
  * Linux genpd attachment + supplier links accepted INSTEAD of
  * reproducing Apple runtime index arrays, CONDITIONAL on the live
  * first_resume verifying all 8 islands ACTUAL=0xf, BUSY=0, CPU
  * AUTO_ENABLE clear before the sequence — that verification runs on
- * every probe and the driver performs no direct kernel PMGR writes. */
+ * every probe and the driver performs no direct kernel PMGR writes.
+ */
 static const bool pf_provider_genpd_strategy = true;
 static const bool pf_pool_word0_proven = true;	/* CONFIRMED (Main raw +
 						 * Reset 183fd50, chain
@@ -174,14 +178,16 @@ static const bool pf_pool_word0_proven = true;	/* CONFIRMED (Main raw +
 						 * 0x70dc/0x736c): DDM Params
 						 * word0 = requested bytes =
 						 * 0x40000 — sourced, not
-						 * synthesized */
+						 * synthesized
+						 */
 static const bool pf_heap_floor_pinned = true;	/* CLOSED: floor =
 						 * getPageSize() return =
 						 * DART page size 0x4000
 						 * (store chain 0x9602e68-90
 						 * + dart-ane0 page-size
 						 * 0x4000 node, pass6h);
-						 * sourced in boot_sources */
+						 * sourced in boot_sources
+						 */
 static const bool pf_dart_page_floor = true;	/* CLOSED (Main raw,
 						 * pass6h + exact-node
 						 * linkage): dtree-j414c.txt
@@ -194,7 +200,8 @@ static const bool pf_dart_page_floor = true;	/* CLOSED (Main raw,
 						 * Runnable linkage check:
 						 * ane-linux-experiments
 						 * tools/
-						 * check_dart_ane_pagesize_linkage.py */
+						 * check_dart_ane_pagesize_linkage.py
+						 */
 static const bool pf_rvbar_lifecycle = true;	/* 6288b0b, 57/57 anchors */
 static const bool pf_pass6_init_contract = true; /* cd25b46, 87/87 */
 
@@ -202,14 +209,16 @@ static const bool pf_pass6_init_contract = true; /* cd25b46, 87/87 */
  * numeric closure + 183fd50 word0 confirmation + netconsole Wi-Fi
  * marker m2-wifi-check-1789937086 @ 15:44:47.121595Z). Source
  * contract closure complete; live attempt authorized by user
- * override (autonomous boot/recovery loop). */
+ * override (autonomous boot/recovery loop).
+ */
 /* Table-block mode selection (2026-09-20 16:23:07 wedge):
  *   mode 0 = ABORT before any write (accidental-repeat prevention),
  *   mode 1 = write the table (kext-faithful; selected per-run via the
  *            rtclient fw_start_table_mode param),
  *   mode 2 = SKIP the table (default: the shipped diagnostic).
  * W8 write-grant tunables are mode-independent (proven no-abort
- * class, w8-run.out: APERTURE_UNLOCKED) and run in every armed mode. */
+ * class, w8-run.out: APERTURE_UNLOCKED) and run in every armed mode.
+ */
 
 static const bool pf_main_lifetime_review = true;
 
@@ -218,7 +227,8 @@ static bool ane_t6021_boot_preflight_complete(void)
 	/* pf_preboot_table_safe is INTENTIONALLY NOT in this product:
 	 * mode 2 (table skip) is the authorized diagnostic state —
 	 * the preflight covers the source contract, the mode selector
-	 * covers the live-fault table gating. */
+	 * covers the live-fault table gating.
+	 */
 	return pf_provider_genpd_strategy && pf_pool_word0_proven &&
 	       pf_heap_floor_pinned && pf_dart_page_floor &&
 	       pf_rvbar_lifecycle && pf_pass6_init_contract &&
@@ -236,7 +246,8 @@ static bool ane_t6021_boot_preflight_complete(void)
  * per "dynamic allocations occur after READY"); heap_floor stays 0
  * here and is supplied together with pf_heap_floor_pinned — NEVER
  * used unpinned (the gate above keeps the whole sequence unrun until
- * then). */
+ * then).
+ */
 static const struct ane_t6021_init_sources boot_sources = {
 	.cfg_size = 0x500000,		/* config+0x138 (0x9613da8/ dac) */
 	.prev_fw_len = 0,		/* first boot; static per reload */
@@ -244,13 +255,16 @@ static const struct ane_t6021_init_sources boot_sources = {
 					 * getPageSize() return; node
 					 * authority dart-ane0 page-size
 					 * 0x4000 (exact linkage check
-					 * passing) */
+					 * passing)
+					 */
 	.pool_word0 = 0x40000,		/* DDM Params word0 = requested
-					 * bytes (CONFIRMED, 183fd50) */
+					 * bytes (CONFIRMED, 183fd50)
+					 */
 };
 
 /* Poll A/B bound: the kext polls <=1000 x sleep(1ms) (selene poll
- * loop 0x73c4-0x73fc analog; rvbar-lifecycle step 6/10). */
+ * loop 0x73c4-0x73fc analog; rvbar-lifecycle step 6/10).
+ */
 #define ANE_BOOT_ACK_POLL_US	1000
 #define ANE_BOOT_POLL_MS	1000
 
@@ -261,7 +275,8 @@ static const struct ane_t6021_init_sources boot_sources = {
  * ALL sources close — until then this file performs no boot write).
  * The kernel backend (readl/writeq/udelay wrappers + prepare hook
  * doing the pool/IPC allocations and the sourced fill) is the small
- * reviewed increment that lands with the gate flip. */
+ * reviewed increment that lands with the gate flip.
+ */
 
 /* ---- kernel io backend for ane_t6021_boot_run() ---- */
 
@@ -304,7 +319,8 @@ static void ane_boot_publish_barrier(void *ctx)
 	 * before the device publish. ORDERING guarantee — not the kext's
 	 * dsb st (completion). Sufficient for the Linux coherent-DMA +
 	 * writel doorbell contract (writel orders prior accesses before
-	 * the MMIO store). */
+	 * the MMIO store).
+	 */
 	dma_wmb();
 }
 
@@ -323,7 +339,8 @@ static void ane_boot_phase(void *ctx, const char *what)
 	 * + a short drain so the line reaches tty0/netconsole/ssh
 	 * BEFORE the risky write it announces (fw-start-debug
 	 * 2026-09-22: fwstart#2 died with zero capture — the marker
-	 * must beat the write). */
+	 * must beat the write).
+	 */
 	dev_emerg(mm->ane->dev, "BOOT-PHASE %s\n", what);
 	msleep(30);
 }
@@ -334,7 +351,8 @@ static void ane_boot_phase(void *ctx, const char *what)
  * surface, and the trust-bounded fw-requested HEAP surface. Every
  * allocation is wedged-pin owned from here on (held while
  * cpu_started; reboot reclaims). Publishes the pool DVA (suballoc at
- * offset 0) as the SCRATCH0/1 halves. */
+ * offset 0) as the SCRATCH0/1 halves.
+ */
 static void *ane_boot_alloc(void *ctx, u64 size, u64 *iova)
 {
 	struct ane_t6021 *ane = ctx;
@@ -356,7 +374,8 @@ static void *ane_boot_alloc(void *ctx, u64 size, u64 *iova)
 /* Kernel prepare: live SCRATCH3/SCRATCH1 reads feed the SHARED
  * assembly (ane_t6021_boot_prepare_publish) with the dma_alloc hook —
  * the same path the fake-MMIO trace test exercises. Allocations are
- * wedged-pin owned from creation (held while cpu_started). */
+ * wedged-pin owned from creation (held while cpu_started).
+ */
 static int ane_t6021_boot_prepare(void *ctx, u32 *lo, u32 *hi)
 {
 	struct ane_t6021_boot_mmio *mm = ctx;
@@ -373,7 +392,8 @@ static int ane_t6021_boot_prepare(void *ctx, u32 *lo, u32 *hi)
 	/* dynamic reads (post-READY, live cells — never hardcoded):
 	 * read order SCRATCH0 then SCRATCH1 (0x95ea0d8/0x95ea100);
 	 * SCRATCH0 >= 0x21 refuses before allocations/publication;
-	 * SCRATCH3 = fw extra-heap request; SCRATCH1+1 = ordinal. */
+	 * SCRATCH3 = fw extra-heap request; SCRATCH1+1 = ordinal.
+	 */
 	scratch0 = readl(eng + ANE_MBI_SCRATCH0);
 	scratch1 = readl(eng + ANE_MBI_SCRATCH0 + 4);
 	request = readl(eng + ANE_MBI_SCRATCH0 + 4 * 3);
@@ -393,7 +413,8 @@ static int ane_t6021_boot_prepare(void *ctx, u32 *lo, u32 *hi)
 	 * error after the pool/ipc allocations must NOT lose them — a
 	 * started CPU may already be fetching, so partial allocations
 	 * are RETAINED (wedged-pin holds them; reboot reclaims), never
-	 * freed on this path. */
+	 * freed on this path.
+	 */
 	ane->boot_pool = a.pool;
 	ane->boot_pool_iova = a.pool_dva;
 	ane->boot_ipc = a.ipc;
@@ -409,7 +430,8 @@ static int ane_t6021_boot_prepare(void *ctx, u32 *lo, u32 *hi)
  * gates were checked by the caller; the run() core re-checks. After
  * the CPU release there is NO ordinary unwind: failures HOLD state
  * (wedged-pin cleanup refuses to free under a started CPU) and the
- * probe binds fenced. */
+ * probe binds fenced.
+ */
 /* Poll-A-timeout progress dump — PROVEN-readable observables ONLY
  * (Main review 2026-09-26): all eight SCRATCH cells (pulse-cleared to 0
  * pre-release, so any nonzero word with SCRATCH7 != READY/WAKE is a
@@ -422,7 +444,8 @@ static int ane_t6021_boot_prepare(void *ctx, u32 *lo, u32 *hi)
  * store target). Its readability, width and reset value are unproven
  * and no pre-release baseline exists, so an after-value would not
  * locate PC (could be preexisting iBoot state, write-only, or
- * normalized). */
+ * normalized).
+ */
 static void ane_t6021_boot_progress_dump(struct ane_t6021 *ane)
 {
 	void __iomem *eng = ane->base[ANE_T6021_REG_ENGINE];
@@ -470,7 +493,8 @@ int ane_t6021_boot_start(struct ane_t6021 *ane, int stop_after, int table_mode, 
 	 * acquired BEFORE the first write — a started CPU can never
 	 * outlive the pin, and a dying module refuses the boot before
 	 * any write happens. Retained on CPU start (never released:
-	 * intentional); released only if no CPU start occurred. */
+	 * intentional); released only if no CPU start occurred.
+	 */
 	if (!try_module_get(THIS_MODULE)) {
 		dev_err(ane->dev,
 			"boot: REFUSED before any write — module ref unavailable (dying); no CPU start possible from a dying module\n");
@@ -491,7 +515,8 @@ int ane_t6021_boot_start(struct ane_t6021 *ane, int stop_after, int table_mode, 
 	/* Released CPU without READY (poll-A timeout, either transport
 	 * mode): capture the 13.5 execution-progress observables NOW,
 	 * while the islands are powered — this is the exact-progress
-	 * datum the next pre-Linux capture cross-checks. */
+	 * datum the next pre-Linux capture cross-checks.
+	 */
 	if (cs && !fa)
 		ane_t6021_boot_progress_dump(ane);
 
@@ -507,7 +532,8 @@ int ane_t6021_boot_start(struct ane_t6021 *ane, int stop_after, int table_mode, 
 	/* started CPU: retain the pin for the whole wedged lifetime.
 	 * Residual: DT hotplug unbind cannot be fully prevented; devm
 	 * release order frees irq before ioremap (probe-order reverse);
-	 * DMA surfaces are wedge-held, never freed. */
+	 * DMA surfaces are wedge-held, never freed.
+	 */
 	dev_warn(ane->dev,
 		 "boot: module PINNED until reboot (started CPU; wedged-pin)\n");
 

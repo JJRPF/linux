@@ -64,14 +64,16 @@ static const int TQ_PRTY_TABLE[ANE_TQ_COUNT] = { 0x1, 0x2, 0x3,	 0x4,
  * evidence, 2026-09-16: the T6001 kill is netconsole-named at
  * 0x28e08c000 (PS_SET0 down, all sets gated); T8103 hard-reset the same
  * way at 0x23b70c000 with the 95dbcf3-era gate armed. No code here ever
- * writes the SET block. */
+ * writes the SET block.
+ */
 #define ANE_PS_ACTUAL_MASK	  0xf0
 #define ANE_PS_WORDS		  6 /* set0, base, set1..4 */
 
 /* ACTUAL nibble of each SET word, word 0 in the low nibble; 0 when the
  * SET block is unmapped. pmgr registers only: engine MMIO is never
  * read for power state (a readl through a warm gate external-aborts
- * and hard-resets the machine). */
+ * and hard-resets the machine).
+ */
 u32 ane_ps_act(struct ane_device *ane)
 {
 	u32 v = 0;
@@ -88,7 +90,8 @@ u32 ane_ps_act(struct ane_device *ane)
 /* Bisect probe: per-word named reads of the SET window. Each word logs
  * before its readl, so a window whose address does not decode on this
  * SoC is named by the last off-box line (word index + byte offset)
- * instead of a silent hard reset between two other prints. */
+ * instead of a silent hard reset between two other prints.
+ */
 u32 ane_ps_act_probe(struct ane_device *ane)
 {
 	u32 v = 0;
@@ -116,7 +119,8 @@ u32 ane_ps_act_probe(struct ane_device *ane)
  * every engine read prints its value, each line carrying the pmgr
  * ACTUAL of the owning partitions. A write that external-aborts the
  * SoC is then named by the last line the off-box netconsole carried,
- * and the bisect starts from that register instead of a guess. */
+ * and the bisect starts from that register instead of a guess.
+ */
 static void ane_rec_writel(struct ane_device *ane, const char *reg,
 			   void __iomem *addr, u32 val)
 {
@@ -205,6 +209,7 @@ int ane_tm_enqueue(struct ane_device *ane, struct ane_request *req)
 static void ane_tm_push_tq(struct ane_device *ane, struct ane_request *req)
 {
 	int qid = req->qid;
+
 	tm_write32(ane, TM_ADDR, tq_read32(ane, TQ_ADDR1(qid)));
 	tm_write32(ane, TM_INFO, tq_read32(ane, TQ_SIZE1(qid)) | req->td_count);
 	tm_write32(ane, TM_PUSH, TQ_PRTY_TABLE[qid] | (qid & 7) << 8); // magic
@@ -235,7 +240,8 @@ static int ane_tm_collect_events(struct ane_device *ane,
 
 /* read_poll_timeout op: consult the DART latch before any engine access.
  * Returns 1 to end the poll when a fault is latched; the caller then
- * handles the fault without ever reading the wedged engine. */
+ * handles the fault without ever reading the wedged engine.
+ */
 static int ane_tm_poll_step(struct ane_device *ane, struct ane_request *req,
 			    u32 *finished)
 {
@@ -270,7 +276,8 @@ int ane_tm_execute(struct ane_device *ane, struct ane_request *req)
 		 * before any fault handling ran), so the poll op consults
 		 * the DART error latch first and stops the poll before the
 		 * engine is touched. Residual hazard: a fault landing
-		 * between one iteration's latch read and engine read. */
+		 * between one iteration's latch read and engine read.
+		 */
 		err = read_poll_timeout(ane_tm_poll_step, status,
 					status != 0, 1, 1000000, false,
 					ane, req, &finished);
@@ -296,11 +303,13 @@ int ane_tm_execute(struct ane_device *ane, struct ane_request *req)
 		 * normal completion writes, hand the scratch pages back,
 		 * and fail this request. No partition power cycle, no
 		 * stream disable: the page tables were never changed by
-		 * the fault. */
+		 * the fault.
+		 */
 		if (err || ane_dart_faulted(ane, NULL, NULL)) {
 			/* Drain failed or the drained program never reached
 			 * completion: the engine is not idle and access is
-			 * off the table. wedge releases the scratch. */
+			 * off the table. wedge releases the scratch.
+			 */
 			err = err ?: -EIO;
 			goto wedge;
 		}
@@ -340,7 +349,8 @@ wedge:
 
 	/* One bounded recovery attempt: stop the tm, power-cycle the engine
 	 * and return to accepting work. Only a failed reset preserves
-	 * resources until reboot. */
+	 * resources until reboot.
+	 */
 	if (ane_tm_recover(ane) < 0) {
 		if (ane->tm_retention)
 			dev_err(ane->dev,
@@ -379,7 +389,8 @@ wedge:
  * nibble per word): a readl through a warm gate external-aborts and
  * hard resets the machine. Covers set0, base and set1..4 from the SET
  * block map; sys_cpu rides its own genpd resume and has no cell in
- * this block on T6001. */
+ * this block on T6001.
+ */
 static int ane_ps_verify_on(struct ane_device *ane)
 {
 	u32 act = 0;
@@ -440,7 +451,8 @@ static int ane_pd_cycle(struct ane_device *ane)
 		/* Pin a second usage ref for the cycle: force_suspend only
 		 * marks needs_force_resume when a ref beyond the probe one
 		 * is held, and without that mark force_resume would leave
-		 * the partition gated. */
+		 * the partition gated.
+		 */
 		pm_runtime_get_noresume(ane->dev);
 		dev_info(ane->dev, "ANERD dev force_suspend begin\n");
 		err = pm_runtime_force_suspend(ane->dev);
@@ -478,7 +490,8 @@ static void ane_tm_drain_retained(struct ane_device *ane)
 
 	/* Stop the TM first: the cycle leaves the enable|halt latch set
 	 * (TQ_EN 0x3000, 2026-09-16 evidence). Clear both bits so the
-	 * re-arm below starts the TM from a defined stopped state. */
+	 * re-arm below starts the TM from a defined stopped state.
+	 */
 	ane_rec_writel(ane, "TM_TQ_EN stop tm+0x0c",
 		       ane->engine + ANE_TM_BASE + TM_TQ_EN,
 		       tm_read32(ane, TM_TQ_EN) & ~0x3000U);
@@ -502,7 +515,8 @@ static void ane_tm_drain_retained(struct ane_device *ane)
 	 * 0x22222222 / 0x2222: four-bit code 2 per TQ slot). While any
 	 * latch is set the TM stays halted and TM_STATUS reads 0. Try the
 	 * W1C convention first (write the read value back), fall back to
-	 * plain zero-clear, and log what this silicon answered to. */
+	 * plain zero-clear, and log what this silicon answered to.
+	 */
 	{
 		static const u16 err_reg[3] = { TM_ERROR1, TM_ERROR2,
 						TM_ERROR3 };
@@ -534,7 +548,8 @@ static void ane_tm_drain_retained(struct ane_device *ane)
 	}
 
 	/* Retention evidence for the off-box console: what the dead task
-	 * left in the committed counter and the error latches. */
+	 * left in the committed counter and the error latches.
+	 */
 	ane_rec_read32(ane, "TM_COMMITTED tm+0x44 (drain)",
 		       ane->engine + ANE_TM_BASE + TM_COMMITTED);
 	ane_rec_read32(ane, "TM_ERROR1 tm+0x58 (drain)",
@@ -574,12 +589,14 @@ int ane_tm_recover(struct ane_device *ane)
 	/* T6001 (tm_retention): the cycle did NOT clear the tm/tq file —
 	 * the timed-out task's events and queue entry are still latched.
 	 * Drain them, or the TM below never reads idle and recovery
-	 * degrades to preserve-until-reboot. */
+	 * degrades to preserve-until-reboot.
+	 */
 	if (ane->tm_retention)
 		ane_tm_drain_retained(ane);
 
 	/* Power-on reset cleared the tm register file; re-arm it exactly
-	 * like the probe resume path does. */
+	 * like the probe resume path does.
+	 */
 	ane_tm_enable(ane, true);
 
 	err = readl_poll_timeout(ane->engine + ANE_TM_BASE + TM_STATUS,
@@ -602,7 +619,8 @@ int ane_tm_recover(struct ane_device *ane)
 		 * stop IOVA teardown under active DMA) can now be unmapped
 		 * and their ranges handed back to the allocator. Without
 		 * this reclaim the ranges would stay pinned for the whole
-		 * module lifetime. */
+		 * module lifetime.
+		 */
 		ane_reclaim_preserved(ane);
 		dev_info(ane->dev, "tm recovered: idle, accepting work again\n");
 	}

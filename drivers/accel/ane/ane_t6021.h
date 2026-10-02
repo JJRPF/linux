@@ -101,7 +101,8 @@ enum {
  *   CPU_STATUS  0x285400048 = 0x0000002a  RUNNING=0 STOPPED=1 IDLE=1
  *   RVBAR       0x285050000 = 0x00000001  valid bit set, entry addr 0
  * The IOP has never been started and no firmware image is programmed,
- * so nothing on this transport can answer the host until it is. */
+ * so nothing on this transport can answer the host until it is.
+ */
 #define ANE_ASC_CPU_CONTROL	0x1400044	/* RUN = BIT(4) */
 #define ANE_ASC_CPU_STATUS	0x1400048	/* m1n1 R_CPU_STATUS shape */
 #define ANE_ASC_RVBAR		0x1050000	/* fw entry | valid bit0 */
@@ -112,7 +113,8 @@ enum {
 
 /* ASC blocks iBoot names in the firmware's __rtk_patch records
  * (RTK_cpu_physical_address 0x285000000 and RTK_cpu_wrapper_physical_address
- * 0x285400000 on the T6021 preload), as engine-relative offsets. */
+ * 0x285400000 on the T6021 preload), as engine-relative offsets.
+ */
 #define ANE_ASC_CPU_BASE	0x1000000
 #define ANE_ASC_WRAPPER_BASE	0x1400000
 
@@ -135,7 +137,8 @@ enum {
  *
  * Receive is POP-ON-READ and 64-bit: upstream does
  *   while (!(i2a_control & EMPTY)) { readq(RECV0); readq(RECV1); }
- * A 32-bit or memcpy-based read would eat messages. */
+ * A 32-bit or memcpy-based read would eat messages.
+ */
 #define ANE_ASC_MBOX		0x1408000
 #define ANE_ASC_MBOX_A2I_CTRL	0x1408110	/* m1n1 INBOX_CTRL  */
 #define ANE_ASC_MBOX_I2A_CTRL	0x1408114	/* m1n1 OUTBOX_CTRL */
@@ -156,7 +159,8 @@ enum {
 /* W10 hazard: a plain READ of ANE+0x1854000 is fabric-fatal (watchdog
  * reset ~63 s later, netconsole pinned the pre-log and no value line).
  * Nothing may touch 0x1854000..0x1c04000; the old engine kill window
- * 0x1c04000..0x1c28000 still stands. */
+ * 0x1c04000..0x1c28000 still stands.
+ */
 #define ANE_FATAL_READ_LO	0x1854000
 #define ANE_FATAL_READ_HI	0x1c04000
 
@@ -189,13 +193,15 @@ enum {
  * doorbell bit: EP0 is RTBuddyManagementEndpoint (_handleHello /
  * _handleEPRollCall / _handlePowerAck), EP1..5 the ANE data channels.
  * [INFERENCE: the fw->host doorbell/IRQ bit numbering mirrors the
- * host->fw SET bit per Asahi rtkit semantics; pinned live by W5.] */
+ * host->fw SET bit per Asahi rtkit semantics; pinned live by W5.]
+ */
 #define ANE_MBI_SCRATCH0	0x1840048	/* SCRATCH0..7 = +0x48..+0x64 */
 #define ANE_MBI_SCRATCH6	0x1840060
 #define ANE_MBI_SCRATCH7	0x1840064
 /* Wake/ack handshake words live in ane_t6021_boot.h
  * (ANE_T6021_BOOT_WAKE_REQ / ANE_T6021_BOOT_ACK) — single source, shared
- * with the userspace boot regression. */
+ * with the userspace boot regression.
+ */
 #define ANE_MBI_DOORBELL	0x1844000	/* write32 (1 << endpoint id) */
 /* NOT a message pair.  W10 proved this is a mirror of the 24 MHz
  * architectural counter: across 32 samples the absolute difference
@@ -205,7 +211,8 @@ enum {
  * liveness was this clock plus a poll count: the RTKit type field
  * GENMASK_ULL(59,52) is structurally zero until the counter passes
  * 2^52 (~6 years of uptime).  Kept only so the old reads stay
- * identifiable in the logs; do not treat as transport. */
+ * identifiable in the logs; do not treat as transport.
+ */
 #define ANE_MBI_TIMEBASE_LO	0x1170000	/* was ANE_MBI_MSG_I2A_LO */
 #define ANE_MBI_TIMEBASE_HI	0x1170004	/* was ANE_MBI_MSG_I2A_HI */
 #define ANE_MBI_MSG_I2A_LO	ANE_MBI_TIMEBASE_LO
@@ -220,7 +227,8 @@ enum {
  * buffer mapping; this one is what the gate sends per command: the
  * gate call is send(&msg48, 0, 1) at vtable+0x1e8, after the command
  * bytes are already memcpy'd into the shared ring at ring_base +
- * cursor.  Length is capped at 0xffffff by the encoder field. */
+ * cursor.  Length is capped at 0xffffff by the encoder field.
+ */
 #define ANE_MBI_MSG48_OFF	GENMASK_ULL(23, 0)
 #define ANE_MBI_MSG48_LEN	GENMASK_ULL(47, 24)
 
@@ -247,11 +255,13 @@ static inline u64 ane_mbi_msg48_encode(u32 cursor, u32 len)
  * 1 << 1 = 0x2.  Only the a2i message register + doorbell are
  * touched, and only behind the mbi_doorbell opt-in (both stay
  * host-write-fatal even behind the W8 grant, W9; SCRATCH family is
- * host-writable granted, W9 nonzero latch). */
+ * host-writable granted, W9 nonzero latch).
+ */
 
 /* MBI channel-table entry (kext stride 0x100, fields at +0x40 family:
  * type @+0x40, doorbell bit @+0x44, size @+0x48, phys @+0x50 —
- * InitializeRTBuddy 0x…95eade8-0x…95eae58) */
+ * InitializeRTBuddy 0x…95eade8-0x…95eae58)
+ */
 #define ANE_MBI_CHAN_STRIDE	0x100
 #define ANE_MBI_CHAN_MAX_DUMP	8
 
@@ -290,7 +300,8 @@ static inline u64 ane_mbi_msg48_encode(u32 cursor, u32 len)
 
 /* RTBuddy app endpoints — K14 InitializeRTBuddyEndpoints opens ids 1..6;
  * ring sizes + fourccs from the per-EP config table (W2 §3). fourcc is
- * byte-reversed in the table (0x54324643 = "T2FC"). */
+ * byte-reversed in the table (0x54324643 = "T2FC").
+ */
 enum ane_t6021_eps {
 	ANE_T6021_EP_INIT = 1,	/* INIT — CSNE_CMD controller channel (W4) */
 	ANE_T6021_EP_T2FC,	/* fw->host commands */
@@ -307,7 +318,8 @@ enum ane_t6021_eps {
  * fw parses the id as u16 at wire offset +4 (W4 correction of the W2
  * §4 "offset 0" claim: fw sites 0x4d244/0x4d264/0x5246c); the kext
  * controller header for the fw->host direction is a different shape
- * (u32 id @ +0x8, 0x24 bytes) and never rides host->fw submission. */
+ * (u32 id @ +0x8, 0x24 bytes) and never rides host->fw submission.
+ */
 enum ane_t6021_csne_cmd {
 	CSNE_CMD_START		= 0x0000,
 	CSNE_CMD_STOP		= 0x0001,
@@ -331,7 +343,8 @@ enum ane_t6021_csne_cmd {
  * 2 = code*1M, 3 = code*2M. The fw encoder picks unit 1 below 1 MiB
  * and unit 2 at or above, size code = CEILING division (cinc on the
  * remainder), so the decoded size is the rounded-up value. rtkit.c's
- * BUFFER_REQUEST is this word with unit 1. */
+ * BUFFER_REQUEST is this word with unit 1.
+ */
 #define ANE_EP_DOORBELL_OFFSET	GENMASK_ULL(43, 0)
 #define ANE_EP_DOORBELL_SIZE	GENMASK_ULL(51, 44)
 #define ANE_EP_DOORBELL_UNIT	GENMASK_ULL(53, 52)
@@ -378,7 +391,8 @@ struct ane_t6021 {
 	int pd_count;
 
 	/* Single MBI consumer (threaded IRQ + probe drain serialize
-	 * here) */
+	 * here)
+	 */
 	struct mutex mbox_lock;
 
 	/* Bring-up state machine — honest semantics (W15):
@@ -388,7 +402,8 @@ struct ane_t6021 {
 	 * fw_alive:    fw first-alive ack observed on SCRATCH7 — NOT
 	 *              the init handshake,
 	 * booted:      full init handshake observed. CSNE/MGMT sessions
-	 *              gate on this flag only. */
+	 *              gate on this flag only.
+	 */
 	bool power_gated;
 	bool cpu_started;
 	bool fw_alive;
@@ -400,16 +415,19 @@ struct ane_t6021 {
 	 * empty because the ASC CPU is STOPPED with RUN clear and RVBAR
 	 * entry 0, i.e. no firmware was ever started.  Default off =
 	 * status-only bring-up.  Opt-in runs the kext-evidenced MBI
-	 * handshake (SCRATCH wake -> fw channel table), capture-only. */
+	 * handshake (SCRATCH wake -> fw channel table), capture-only.
+	 */
 	bool transport;
 	bool doorbell;	/* mbi_doorbell=1: EP rings may write the +0x1844000
-			 * doorbell + a2i message register (decoded 2026-09-19) */
+			 * doorbell + a2i message register (decoded 2026-09-19)
+			 */
 	bool irq_requested;
 
 	struct ane_t6021_ep ep[ANE_T6021_EP_COUNT];
 
 	/* W13 fw surface (fw_load=1): coherent, DART-mapped via the
-	 * device's iommu group. NULL unless loaded. */
+	 * device's iommu group. NULL unless loaded.
+	 */
 	void *fw_buf;
 	dma_addr_t fw_iova;
 	u32 fw_size;
@@ -417,26 +435,30 @@ struct ane_t6021 {
 	 * RVBAR entry); 0 = no alias mapped. The DMA allocator has no
 	 * runtime reservation API on this kernel, so instead of a prose
 	 * collision bound every DMA allocation site must pass its iova
-	 * through ane_t6021_fw_alias_iova_ok() and refuse overlaps. */
+	 * through ane_t6021_fw_alias_iova_ok() and refuse overlaps.
+	 */
 	u64 fw_alias_iova;
 	/* Per-window mapped extents (iova, bytes) — teardown unmaps
 	 * exactly these, because the windows are not assumed adjacent
 	 * (live trace: hole between SEG0 and SEGi) and unmapping a page
 	 * that was never mapped trips dart_unmap_pages (io-pgtable-dart
 	 * .c:319 WARN, 2026-09-26 state-report unwind). Set only on
-	 * successful map. */
+	 * successful map.
+	 */
 #define ANE_FW_ALIAS_MAX_WIN	3
 	u64 fw_alias_ext_iova[ANE_FW_ALIAS_MAX_WIN];
 	size_t fw_alias_ext_len[ANE_FW_ALIAS_MAX_WIN];
 	int fw_alias_extn;
 	/* W16 pass-3: ane_cpu reset controller (ps RESET via the pmgr
 	 * pwrstate reset_controller ops); NULL when the DT carries no
-	 * resets property. */
+	 * resets property.
+	 */
 	struct reset_control *cpu_rst;
 
 	/* W15 boot allocations (gate-gated: never exist until the
 	 * preflight opens and the sequence passes poll A). Ownership per
-	 * the wedged-pin rule: held, never freed, while cpu_started. */
+	 * the wedged-pin rule: held, never freed, while cpu_started.
+	 */
 	void *boot_pool;		/* 'DDM ' pool, 0x40000 (Params word0) */
 	dma_addr_t boot_pool_iova;
 	void *boot_ipc;			/* 'IPC ' surface, max(0x4000, ord+1) */
@@ -446,10 +468,12 @@ struct ane_t6021 {
 	dma_addr_t boot_heap_iova;
 	u64 boot_heap_size;
 	u32 prev_fw_len;		/* [0x30]: previous fw image length
-					 * (0 first boot; updated per reload) */
+					 * (0 first boot; updated per reload)
+					 */
 	u64 boot_scratch_result;	/* SCRATCH1<<32 | SCRATCH0 captured
 					 * at DONE — raw; success semantics
-					 * UNSOURCED (never inferred) */
+					 * UNSOURCED (never inferred)
+					 */
 	bool response_validated;
 	bool hybrid_pinned;	/* FALSE until the DONE response
 				 * semantics are sourced AND the
@@ -457,12 +481,14 @@ struct ane_t6021 {
 				 * validated against owned
 				 * windows — transport/CSNE
 				 * sessions stay fenced on first
-				 * boot regardless of booted */
+				 * boot regardless of booted
+				 */
 };
 
 /* Enforced alias-window invariant (W16): the DMA allocator has no
  * runtime IOVA reservation on this kernel, so every DMA allocation
- * site must refuse a mapping that overlaps the fw entry alias. */
+ * site must refuse a mapping that overlaps the fw entry alias.
+ */
 static inline bool ane_t6021_fw_alias_iova_ok(const struct ane_t6021 *ane,
 					      dma_addr_t iova, size_t size)
 {
@@ -486,7 +512,8 @@ irqreturn_t ane_t6021_rtkit_irq_thread(int irq, void *data);
  * must already hold): it owns the wedged-pin module lifetime once the
  * CPU is released; stop_after = 0 full run, 1..4 = fw-start-debug
  * step bisect (stop after that step, -ECANCELED, clean unwind while
- * no CPU started). */
+ * no CPU started).
+ */
 int ane_t6021_boot_start(struct ane_t6021 *ane, int stop_after, int table_mode,
 			 int rtb_mode);
 
@@ -506,13 +533,15 @@ int ane_t6021_boot_start(struct ane_t6021 *ane, int stop_after, int table_mode,
  * REG_FILE_LOAD/IPC_ENDPOINT_SET fall through the processor's id tree
  * to the default path (0x4e65c): carried without field parsing, so
  * their payloads beyond the header are opaque until the W1 live
- * exchange pins them. */
+ * exchange pins them.
+ */
 struct ane_csne_hdr {
 	u32 rsvd0;	/* bytes 0..3: never read by the fw processor; 0 */
 	u16 id;		/* PROVEN u16 @ +4 (sites above) */
 	u8 flags;	/* fw-written byte @ +6 (status/scratch) [INFERENCE] */
 	u8 rsvd7;
 };
+
 static_assert(sizeof(struct ane_csne_hdr) == 8);
 
 static inline void ane_csne_hdr_init(struct ane_csne_hdr *h, u16 id)
@@ -523,11 +552,13 @@ static inline void ane_csne_hdr_init(struct ane_csne_hdr *h, u16 id)
 
 /* Header-only CSNE_CMDs: BOOT (0x10 — boot-arg surfaces ride
  * SCRATCH0-7 / SetupFWInitBootArgs, not the command, phase1 §2.5),
- * PING (0x11), BUILDINFO (0x06). sizeof(struct ane_csne_hdr) bytes. */
+ * PING (0x11), BUILDINFO (0x06). sizeof(struct ane_csne_hdr) bytes.
+ */
 
 /* REG_FILE_LOAD (0x05) payload: the 1456 B blob is the fw's own
  * __DATA._rtk_tunables section (@0x100590, size 0x5b0) — its transport
- * (inline vs shared-memory iova) is [INFERENCE], pinned by W1. */
+ * (inline vs shared-memory iova) is [INFERENCE], pinned by W1.
+ */
 struct ane_csne_cmd_reg_file_load {
 	struct ane_csne_hdr hdr;
 	u8 blob[];
@@ -535,7 +566,8 @@ struct ane_csne_cmd_reg_file_load {
 
 /* IPC_ENDPOINT_SET (0x15) payload: binds a host RTBuddy endpoint to a
  * fw channel. No field parsed by the fw processor — layout
- * [INFERENCE], pinned by W1. */
+ * [INFERENCE], pinned by W1.
+ */
 struct ane_csne_cmd_ipc_endpoint_set {
 	struct ane_csne_hdr hdr;
 	u8 payload[];
@@ -556,7 +588,8 @@ struct ane_csne_cmd_ipc_endpoint_set {
  * commands form same-shape arrays in the ring; this driver submits one
  * command per slot. INFERENCE_CALL shares the shape [INFERENCE: the
  * 0x404 id is not in the decoded id tree — it is the W4 submission
- * endpoint per the phase-1 workstream plan]. */
+ * endpoint per the phase-1 workstream plan].
+ */
 struct ane_csne_io_elem {
 	u8 bytes[0x30];	/* internal layout not decoded */
 };
@@ -574,6 +607,7 @@ struct ane_csne_cmd_procedure_call {
 	u8 gap_30[0x30];
 	struct ane_csne_io_elem io[];
 };
+
 static_assert(offsetof(struct ane_csne_cmd_procedure_call, program_id) == 0x08);
 static_assert(offsetof(struct ane_csne_cmd_procedure_call, procedure_id) == 0x0c);
 static_assert(offsetof(struct ane_csne_cmd_procedure_call, field_10) == 0x10);
@@ -591,7 +625,8 @@ ane_csne_cmd_procedure_call_size(unsigned int num_io_buffers)
 /* Fw-side bound: the generic CSNE processor rejects work items of
  * 0x1b89 bytes and above (@0x4d134 cmp x2, #0x1b89). What x2 names
  * beyond "the command's size" is [INFERENCE] — enforced here as a
- * fail-fast so an oversized command cannot enter the ring. */
+ * fail-fast so an oversized command cannot enter the ring.
+ */
 #define ANE_CSNE_CMD_MAX_SIZE	0x1b88
 
 /* ---- LOAD_PROGRAM (0x200) wire contract (selene 0x4e44c hook +
@@ -603,7 +638,8 @@ ane_csne_cmd_procedure_call_size(unsigned int num_io_buffers)
  * u32(record+0x20). The fw dereferences record+0x18 (0x5d0c8), so it
  * carries a fw-addressable pointer — in this driver, the IOVA of a
  * host-authored section object (below). Absent sections (flags bit0
- * clear) are skipped by every decoded parser. ---- */
+ * clear) are skipped by every decoded parser. ----
+ */
 enum ane_t6021_load_section {
 	ANE_SEC_GENERIC = 0,
 	ANE_SEC_KERNEL,
@@ -616,6 +652,7 @@ enum ane_t6021_load_section {
 	ANE_SEC_PROCPROP,
 	ANE_SEC_COUNT			/* 9 */
 };
+
 #define ANE_T6021_LOAD_SEC_COUNT	9
 
 static const char * const
@@ -637,7 +674,8 @@ static_assert(sizeof(struct ane_csne_cmd_load_program) ==
  * bytes any decoded parser reads; the rest is unread pass-through):
  * +0x00 u8 flags — bit0 present; +0x18 u64 obj — fw-addressable
  * pointer, validated by 0x5d0c8 to land inside a registered program
- * object's entry table; +0x20 u64 key — per-section lookup key. */
+ * object's entry table; +0x20 u64 key — per-section lookup key.
+ */
 #define ANE_SEC_F_PRESENT	BIT(0)
 
 static inline void ane_sec_record_init(void *rec, u64 obj, u64 key)
@@ -654,7 +692,8 @@ static inline void ane_sec_record_init(void *rec, u64 obj, u64 key)
  * 0x5d0c8 validates: magic 1 @+0, count <= 0x10 @+4, table entry
  * count in [0x201, 0x400] @+0x204, 0x30-byte entry table @+0x208 with
  * the recorded pointer bounded inside it). Minimum object = header +
- * 0x201 zeroed entries; entries are the same 0x30-byte shape. */
+ * 0x201 zeroed entries; entries are the same 0x30-byte shape.
+ */
 #define ANE_PROGOBJ_MIN_ENTRIES	0x201
 #define ANE_PROGOBJ_MAX_ENTRIES	0x400
 #define ANE_PROGOBJ_TABLE_OFF	0x208
@@ -682,7 +721,8 @@ static inline void ane_progobj_init(void *obj, u32 entries)
  * section KEY is an offset past the array, >= op_count*0x40c + 4).
  * Operation record fields decoded: +0x00 u32 type <= 4; +0x04 u16
  * <= 0x10; +0x08 u32 procedure_count <= 0x80 (non-zero); +0x0c..
- * u32 procedure indices, each <= 0x3c. */
+ * u32 procedure indices, each <= 0x3c.
+ */
 #define ANE_OPSEC_OP_REC_SIZE	0x40c
 #define ANE_OPSEC_MAX_OPS	0x80
 
@@ -696,18 +736,21 @@ static inline size_t ane_opsec_size(u32 ops)
  * memcpy into the ring, 54-bit doorbell word, cursor
  * advanced only on doorbell success. No synchronous response matching:
  * fw->host responses arrive on the T2F* channels and are not walked
- * yet (W2 §3). Sleeps (mutex) — process context only. */
+ * yet (W2 §3). Sleeps (mutex) — process context only.
+ */
 int ane_t6021_csne_submit(struct ane_t6021 *ane, const void *cmd, size_t size);
 
 /* Probe-time one-shot CSNE_CMD_PING on EP1 (W5-live), behind
- * mbi_doorbell=1 only; watches the fw response surfaces for 3 s. */
+ * mbi_doorbell=1 only; watches the fw response surfaces for 3 s.
+ */
 void ane_t6021_csne_ping_attempt(struct ane_t6021 *ane);
 
 /* W13/W14 firmware loader (ane_t6021_fwload.c): validate + stage +
  * dart-ane0-map the 13.5 PRELOAD payload behind fw_load=1. This is
  * the staging half of the boot contract: the Params+0x18 producer
  * chain and the RVBAR fold are closed (mapper-callchain audit, commits
- * 3762aee/12be074); ane_t6021_boot.c consumes the staged surface. */
+ * 3762aee/12be074); ane_t6021_boot.c consumes the staged surface.
+ */
 int ane_t6021_fwload_probe(struct ane_t6021 *ane);
 void ane_t6021_fwload_remove(struct ane_t6021 *ane);
 bool ane_t6021_fwload_options_ok(void);
@@ -731,7 +774,8 @@ struct ane_asc_tunables;
  *    service writes them through its DART at IOVA == PA. ps_off: the
  *    first of the seven in that page.
  *  trace_td_off: engine offset of the TM last-committed-TD word read by
- *    trace_td; 0 = trace_td unsupported. */
+ *    trace_td; 0 = trace_td unsupported.
+ */
 struct ane_t602x_soc {
 	u32 soc;
 	u32 soc_revision;

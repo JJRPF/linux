@@ -29,7 +29,8 @@ struct ane_device {
 	 * this engine, mapped at probe on every SoC. Read-only, always:
 	 * pmgr reads give recovery its ACTUAL evidence, while direct SET
 	 * writes are firmware-locked and external-abort the SoC (T6001
-	 * netconsole-named 2026-09-16; T8103 same mechanism). */
+	 * netconsole-named 2026-09-16; T8103 same mechanism).
+	 */
 	phys_addr_t ps_base;
 	void __iomem *ps;
 
