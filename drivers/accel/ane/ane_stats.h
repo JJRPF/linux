@@ -1,15 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only OR MIT */
 /*
- * ane/include/ane_stats.h — shared ANE producer-side counters and ring.
+ * Producer-side ANE counters and submission ring, shared by ane.ko and
+ * ane_t6021.ko.
  *
- * Used by both out-of-tree drivers (ane.ko, ane_t6021.ko) and by the
- * in-tree Linux port. Compiles in-kernel (with <linux/atomic.h>) and
- * on the host (with GCC __atomic_* builtins or C11 atomics; both work
- * for the unit test on a quiet box). The same code exercises the
- * counter/union/ring logic without touching the device.
- *
- * Contract (maintainer-lead w76 + coreglass docs/DESIGN.md
- * "Producer contract" and "ANE, cheapest first"):
+ * Contract:
  *   - sysfs under /sys/class/accel/accel<digit>/device/ane_stats,
  *     mode 0444, ASCII "key value" lines, integers only: busy_ns
  *     (cumulative u64), jobs (cumulative u64). busy_ns counts only
@@ -38,121 +32,13 @@
 #ifndef __ANE_STATS_H__
 #define __ANE_STATS_H__
 
-#include <linux/types.h>
-
-#ifdef __KERNEL__
 #include <linux/atomic.h>
 #include <linux/ktime.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
 #include <linux/sysfs.h>
+#include <linux/types.h>
 #include <drm/drm_debugfs.h>
-#define ane_stats_atomic_u64	atomic64_t
-#define ane_stats_atomic_u32	atomic_t
-static inline u64 ane_stats_atomic64_read(const atomic64_t *v) { return atomic64_read(v); }
-static inline void ane_stats_atomic64_add(u64 i, atomic64_t *v) { atomic64_add(i, v); }
-static inline u64 ane_stats_atomic64_fetch_add(u64 i, atomic64_t *v) { return atomic64_fetch_add(i, v); }
-static inline bool ane_stats_atomic64_try_cmpxchg(atomic64_t *v, u64 *old, u64 new) {
-	return atomic64_try_cmpxchg(v, old, new);
-}
-static inline void ane_stats_atomic_set(atomic_t *v, int i) { atomic_set(v, i); }
-static inline void ane_stats_atomic_set_release(atomic_t *v, u32 i) {
-	atomic_set_release(v, (int)i);
-}
-static inline int ane_stats_atomic_read(const atomic_t *v) { return atomic_read(v); }
-static inline u32 ane_stats_atomic_cmpxchg(atomic_t *v, u32 old, u32 new) {
-	return (u32)atomic_cmpxchg(v, (int)old, (int)new);
-}
-static inline bool ane_stats_atomic_try_cmpxchg(atomic_t *v, u32 *old, u32 new) {
-	return atomic_try_cmpxchg(v, (int *)old, (int)new);
-}
-static inline u32 ane_stats_atomic_read_acquire(const atomic_t *v) {
-	return (u32)atomic_read_acquire(v);
-}
-static inline u64 ane_stats_atomic64_read_acquire(const atomic64_t *v) {
-	return atomic64_read_acquire(v);
-}
-static inline void ane_stats_atomic64_set_release(atomic64_t *v, u64 i) {
-	atomic64_set_release(v, i);
-}
-static inline void ane_stats_smp_wmb(void) { smp_wmb(); }
-static inline u64 ane_stats_now_ns(void) { return ktime_get_ns(); }
-#else
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <time.h>
-#include <string.h>
-
-/* ane_stats_emit writes at most this many bytes (kernel side sysfs_emit
- * asserts a page buffer; the bound documents the format size: two u64
- * keys can reach 8 + 20 + 1 + 5 + 20 + 1 = 55 bytes). */
-#define ANE_STATS_EMIT_MAX 64
-
-/*
- * On the host we use GCC __atomic_* builtins (or C11 atomics via
- * stdatomic.h; both compile on a standard toolchain). The atomics are
- * declared on plain u32/u64 fields rather than C11 _Atomic, which lets
- * the same struct compile unmodified on the kernel side (atomic64_t /
- * atomic_t are non-_Atomic opaque types) and on the host without
- * dragging _Atomic semantics through user-facing definitions.
- */
-typedef uint64_t ane_stats_atomic_u64;
-typedef uint32_t ane_stats_atomic_u32;
-static inline uint64_t ane_stats_atomic64_read(const ane_stats_atomic_u64 *v) {
-	return __atomic_load_n(v, __ATOMIC_RELAXED);
-}
-static inline void ane_stats_atomic64_add(uint64_t i, ane_stats_atomic_u64 *v) {
-	__atomic_add_fetch(v, i, __ATOMIC_RELAXED);
-}
-static inline uint64_t ane_stats_atomic64_fetch_add(uint64_t i, ane_stats_atomic_u64 *v) {
-	return __atomic_fetch_add(v, i, __ATOMIC_RELAXED);
-}
-static inline bool ane_stats_atomic64_try_cmpxchg(ane_stats_atomic_u64 *v,
-						  uint64_t *old, uint64_t new) {
-	return __atomic_compare_exchange_n(v, old, new, 0,
-					   __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
-}
-static inline void ane_stats_atomic_set(ane_stats_atomic_u32 *v, uint32_t i) {
-	__atomic_store_n(v, i, __ATOMIC_RELAXED);
-}
-static inline void ane_stats_atomic_set_release(ane_stats_atomic_u32 *v,
-						uint32_t i) {
-	__atomic_store_n(v, i, __ATOMIC_RELEASE);
-}
-static inline uint32_t ane_stats_atomic_read(const ane_stats_atomic_u32 *v) {
-	return __atomic_load_n(v, __ATOMIC_RELAXED);
-}
-static inline uint32_t ane_stats_atomic_cmpxchg(ane_stats_atomic_u32 *v,
-						uint32_t old, uint32_t new) {
-	__atomic_compare_exchange_n(v, &old, new, 0,
-				    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
-	return old;
-}
-static inline bool ane_stats_atomic_try_cmpxchg(ane_stats_atomic_u32 *v,
-						uint32_t *old, uint32_t new) {
-	return __atomic_compare_exchange_n(v, old, new, 0,
-					   __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
-}
-static inline uint32_t ane_stats_atomic_read_acquire(const ane_stats_atomic_u32 *v) {
-	return __atomic_load_n(v, __ATOMIC_ACQUIRE);
-}
-static inline uint64_t ane_stats_atomic64_read_acquire(const ane_stats_atomic_u64 *v) {
-	return __atomic_load_n(v, __ATOMIC_ACQUIRE);
-}
-static inline void ane_stats_atomic64_set_release(ane_stats_atomic_u64 *v, uint64_t i) {
-	__atomic_store_n(v, i, __ATOMIC_RELEASE);
-}
-static inline void ane_stats_smp_wmb(void) { __atomic_thread_fence(__ATOMIC_RELEASE); }
-static inline uint64_t ane_stats_now_ns(void) {
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-}
-#define module_param(name, type, perm)
-#define MODULE_PARM_DESC(name, desc)
-#endif /* __KERNEL__ */
 
 /*
  * Per-device counters. busy_ns holds the busy time folded from closed
@@ -173,22 +59,23 @@ static inline uint64_t ane_stats_now_ns(void) {
 #define ANE_STATS_INFLIGHT_TRANS 0xFFFFFFFFu
 
 struct ane_stats_counters {
-	ane_stats_atomic_u64	busy_ns;
-	ane_stats_atomic_u64	jobs;
-	ane_stats_atomic_u64	last_busy_end;
-	ane_stats_atomic_u64	max_end;
-	ane_stats_atomic_u32	inflight;
+	atomic64_t	busy_ns;
+	atomic64_t	jobs;
+	atomic64_t	last_busy_end;
+	atomic64_t	max_end;
+	atomic_t	inflight;
 };
 
-/* max_end tracks the latest completion sample fed to complete(); the
+/*
+ * max_end tracks the latest completion sample fed to complete(); the
  * draining completion folds against max(end_ns, max_end) so a stale
- * sample on the last completer cannot truncate the period. */
-static inline void ane_stats_atomic64_max(uint64_t i,
-					  ane_stats_atomic_u64 *v)
+ * sample on the last completer cannot truncate the period.
+ */
+static inline void ane_stats_atomic64_max(u64 i, atomic64_t *v)
 {
-	uint64_t old = ane_stats_atomic64_read(v);
+	u64 old = atomic64_read(v);
 
-	while (i > old && !ane_stats_atomic64_try_cmpxchg(v, &old, i))
+	while (i > old && !atomic64_try_cmpxchg(v, &old, i))
 		;
 }
 
@@ -202,13 +89,13 @@ static inline void ane_stats_atomic64_max(uint64_t i,
  * in the file header line).
  */
 struct ane_stats_ring_entry {
-	ane_stats_atomic_u64	seq;		/* even = committed; odd = writing */
-	ane_stats_atomic_u64	submit_ns;
-	ane_stats_atomic_u64	start_ns;
-	ane_stats_atomic_u64	end_ns;
-	ane_stats_atomic_u32	tasks;
-	ane_stats_atomic_u32	rc;
-	ane_stats_atomic_u64	tmst;		/* raw TM tick on ane.ko; 0 = unavailable */
+	atomic64_t	seq;		/* even = committed; odd = writing */
+	atomic64_t	submit_ns;
+	atomic64_t	start_ns;
+	atomic64_t	end_ns;
+	atomic_t	tasks;
+	atomic_t	rc;
+	atomic64_t	tmst;		/* raw TM tick on ane.ko; 0 = unavailable */
 };
 
 /*
@@ -218,9 +105,9 @@ struct ane_stats_ring_entry {
  * against torn writes.
  */
 struct ane_stats_ring {
-	ane_stats_atomic_u64		head;
-	uint32_t			n;	/* power of two */
-	uint32_t			mask;	/* n - 1 */
+	atomic64_t			head;
+	u32				n;	/* power of two */
+	u32				mask;	/* n - 1 */
 	struct ane_stats_ring_entry	*slots;
 };
 
@@ -233,15 +120,15 @@ struct ane_stats_ring {
  */
 static inline void ane_stats_counters_init(struct ane_stats_counters *ctrs,
 					   struct ane_stats_ring *ring,
-					   uint32_t n_shift)
+					   u32 n_shift)
 {
-	uint32_t n_total = (1u << n_shift);
+	u32 n_total = (1u << n_shift);
 
 	memset(ctrs, 0, sizeof(*ctrs));
 	memset(ring, 0, sizeof(*ring));
 	ring->n = n_total;
 	ring->mask = n_total - 1u;
-	ane_stats_atomic64_set_release(&ring->head, 0ull);
+	atomic64_set_release(&ring->head, 0ull);
 }
 
 /*
@@ -258,63 +145,72 @@ static inline void ane_stats_counters_init(struct ane_stats_counters *ctrs,
  * sentinel; later overlapping submissions only increment inflight.
  * The sentinel window is a handful of instructions, so the bounded
  * cmpxchg retries never observe a half-open period.
+ *
+ * A period never starts before the previous one folded: a caller
+ * sample can be stale (taken before the transition), so the latch is
+ * max(submit_ns, max_end).
  */
-static inline uint64_t ane_stats_begin(struct ane_stats_counters *ctrs,
-				       struct ane_stats_ring *ring,
-				       uint64_t submit_ns, uint32_t tasks)
+static inline u64 ane_stats_begin(struct ane_stats_counters *ctrs,
+				  struct ane_stats_ring *ring,
+				  u64 submit_ns, u32 tasks)
 {
-	uint64_t ticket = ane_stats_atomic64_fetch_add(1ull, &ring->head) + 1ull;
+	u64 ticket = atomic64_fetch_add(1ull, &ring->head) + 1ull;
 	struct ane_stats_ring_entry *e =
 		&ring->slots[(size_t)(ticket - 1ull) & ring->mask];
-	/* A period never starts before the previous one folded: a
-	 * caller sample can be stale (taken before the transition),
-	 * so the latch is max(submit_ns, max_end). */
-	uint64_t latch = ane_stats_atomic64_read(&ctrs->max_end);
-	uint32_t cur;
+	u64 latch = atomic64_read(&ctrs->max_end);
+	u32 cur;
 
 	if (submit_ns > latch)
 		latch = submit_ns;
-	cur = ane_stats_atomic_read(&ctrs->inflight);
+	cur = atomic_read(&ctrs->inflight);
 
 	for (;;) {
 		if (cur == ANE_STATS_INFLIGHT_TRANS) {
-			cur = ane_stats_atomic_read(&ctrs->inflight);
+			cur = atomic_read(&ctrs->inflight);
 		} else if (!cur) {
-			if (ane_stats_atomic_cmpxchg(&ctrs->inflight, 0u,
-						     ANE_STATS_INFLIGHT_TRANS) != 0u) {
-				cur = ane_stats_atomic_read(&ctrs->inflight);
+			if (atomic_cmpxchg(&ctrs->inflight, 0u,
+					   ANE_STATS_INFLIGHT_TRANS) != 0u) {
+				cur = atomic_read(&ctrs->inflight);
 				continue;
 			}
-			ane_stats_atomic64_set_release(&ctrs->last_busy_end,
-						       latch);
-			ane_stats_atomic_set_release(&ctrs->inflight, 1u);
+			atomic64_set_release(&ctrs->last_busy_end, latch);
+			atomic_set_release(&ctrs->inflight, 1u);
 			break;
-		} else if (ane_stats_atomic_try_cmpxchg(&ctrs->inflight, &cur,
-							cur + 1u)) {
+		} else if (atomic_try_cmpxchg(&ctrs->inflight, &cur,
+					      cur + 1u)) {
 			break;
 		}
 	}
 
-	ane_stats_smp_wmb();
-	(void)ane_stats_atomic64_read_acquire(&e->seq); /* pair with reader */
-	/* In flight: seq stays odd (2*ticket - 1) until complete()
+	/*
+	 * Order the counter stores above (last_busy_end, inflight) before
+	 * the slot stores below.
+	 */
+	smp_wmb();
+	(void)atomic64_read_acquire(&e->seq); /* pair with reader */
+	/*
+	 * In flight: seq stays odd (2*ticket - 1) until complete()
 	 * commits the even final value 2*ticket. The reader only prints
 	 * even seqs it can match, so an unfinished submission never
-	 * prints and a torn write is never visible. */
-	ane_stats_atomic64_set_release(&e->seq, 2ull * ticket - 1ull);
-	ane_stats_atomic64_set_release(&e->submit_ns, submit_ns);
-	/* start_ns is the busy-period start this submission is counted
+	 * prints and a torn write is never visible.
+	 */
+	atomic64_set_release(&e->seq, 2ull * ticket - 1ull);
+	atomic64_set_release(&e->submit_ns, submit_ns);
+	/*
+	 * start_ns is the busy-period start this submission is counted
 	 * from (the latch), not the caller's sample: a sample taken
 	 * before the transition can predate period entry, and the
-	 * union reference must use consumed values. */
-	ane_stats_atomic64_set_release(&e->start_ns,
-				       ane_stats_atomic64_read(&ctrs->last_busy_end));
-	ane_stats_atomic64_set_release(&e->end_ns, submit_ns);
-	ane_stats_atomic_set(&e->tasks, tasks);
-	ane_stats_atomic_set(&e->rc, (uint32_t)0xFFFFFFFFu); /* sentinel: not done */
-	ane_stats_atomic64_set_release(&e->tmst, 0ull);
+	 * union reference must use consumed values.
+	 */
+	atomic64_set_release(&e->start_ns,
+			     atomic64_read(&ctrs->last_busy_end));
+	atomic64_set_release(&e->end_ns, submit_ns);
+	atomic_set(&e->tasks, tasks);
+	atomic_set(&e->rc, (u32)0xFFFFFFFFu); /* sentinel: not done */
+	atomic64_set_release(&e->tmst, 0ull);
 	return ticket;
 }
+
 /*
  * Hot-path submission completion. The last submission out of a busy
  * period closes it: under the transition sentinel it folds the whole
@@ -326,67 +222,83 @@ static inline uint64_t ane_stats_begin(struct ane_stats_counters *ctrs,
  */
 static inline void ane_stats_complete(struct ane_stats_counters *ctrs,
 				      struct ane_stats_ring *ring,
-				      uint64_t ticket, uint64_t end_ns,
-				      uint32_t rc, uint64_t tmst)
+				      u64 ticket, u64 end_ns,
+				      u32 rc, u64 tmst)
 {
 	struct ane_stats_ring_entry *e =
 		&ring->slots[(size_t)(ticket - 1ull) & ring->mask];
-	uint32_t cur = ane_stats_atomic_read(&ctrs->inflight);
-	uint64_t fold_end = 0ull;
+	u32 cur = atomic_read(&ctrs->inflight);
+	u64 fold_end = 0ull;
 
-	/* Feed this completion's end sample before the transition: a
+	/*
+	 * Feed this completion's end sample before the transition: a
 	 * drainer can only observe inflight == 1 after every other
-	 * completer has fed, so the fold below sees the whole period. */
+	 * completer has fed, so the fold below sees the whole period.
+	 */
 	ane_stats_atomic64_max(end_ns, &ctrs->max_end);
 
 	for (;;) {
 		if (cur == ANE_STATS_INFLIGHT_TRANS) {
-			cur = ane_stats_atomic_read(&ctrs->inflight);
+			cur = atomic_read(&ctrs->inflight);
 		} else if (cur > 1u) {
-			if (ane_stats_atomic_try_cmpxchg(&ctrs->inflight, &cur,
-							 cur - 1u))
+			if (atomic_try_cmpxchg(&ctrs->inflight, &cur,
+					       cur - 1u))
 				break;
 		} else if (!cur) {
-			/* Unbalanced complete (cannot happen with the
+			/*
+			 * Unbalanced complete (cannot happen with the
 			 * documented one-begin-per-complete pairing):
-			 * count the job, fold nothing, never hang. */
+			 * count the job, fold nothing, never hang.
+			 */
 			break;
-		} else if (ane_stats_atomic_cmpxchg(&ctrs->inflight, 1u,
-						    ANE_STATS_INFLIGHT_TRANS) == 1u) {
-			uint64_t s = ane_stats_atomic64_read(&ctrs->last_busy_end);
+		} else if (atomic_cmpxchg(&ctrs->inflight, 1u,
+					  ANE_STATS_INFLIGHT_TRANS) != 1u) {
+			cur = atomic_read(&ctrs->inflight);
+		} else {
+			u64 s = atomic64_read(&ctrs->last_busy_end);
 
-			/* The period ends at the latest completion sample
+			/*
+			 * The period ends at the latest completion sample
 			 * in it, not at this caller's (possibly stale)
 			 * sample: every member fed max_end before the
-			 * drain could observe inflight == 1. */
-			fold_end = ane_stats_atomic64_read(&ctrs->max_end);
+			 * drain could observe inflight == 1.
+			 */
+			fold_end = atomic64_read(&ctrs->max_end);
 			if (fold_end < end_ns)
 				fold_end = end_ns;
 			if (fold_end > s)
-				ane_stats_atomic64_add(fold_end - s, &ctrs->busy_ns);
-			ane_stats_atomic_set_release(&ctrs->inflight, 0u);
+				atomic64_add(fold_end - s, &ctrs->busy_ns);
+			atomic_set_release(&ctrs->inflight, 0u);
 			break;
-		} else {
-			cur = ane_stats_atomic_read(&ctrs->inflight);
 		}
 	}
-	ane_stats_atomic64_add(1ull, &ctrs->jobs);
+	atomic64_add(1ull, &ctrs->jobs);
 
-	/* Commit ring slot with the even final seq 2*ticket. The value
+	/* Order the counter stores above before the slot stores below. */
+	smp_wmb();
+	/*
+	 * The drainer records the consumed fold end, not its own sample,
+	 * so the slot union equals busy_ns exactly.
+	 */
+	if (fold_end)
+		atomic64_set_release(&e->end_ns, fold_end);
+	else
+		atomic64_set_release(&e->end_ns, end_ns);
+	atomic_set(&e->rc, rc);
+	atomic64_set_release(&e->tmst, tmst);
+	/*
+	 * Order the slot field stores before the even seq store that
+	 * publishes them; pairs with the acquire load of e->seq in
+	 * ane_timeline_show().
+	 */
+	smp_wmb();
+	/*
+	 * Commit the slot with the even final seq 2*ticket. The value
 	 * must not depend on the current ring->head: concurrent
 	 * submissions (ane_t6021) advance it, and a head-derived seq
-	 * would mislabel the slot. The drainer records the consumed
-	 * fold end, not its own sample, so the slot union equals
-	 * busy_ns exactly. */
-	ane_stats_smp_wmb();
-	if (fold_end)
-		ane_stats_atomic64_set_release(&e->end_ns, fold_end);
-	else
-		ane_stats_atomic64_set_release(&e->end_ns, end_ns);
-	ane_stats_atomic_set(&e->rc, rc);
-	ane_stats_atomic64_set_release(&e->tmst, tmst);
-	ane_stats_smp_wmb();
-	ane_stats_atomic64_set_release(&e->seq, 2ull * ticket);
+	 * would mislabel the slot.
+	 */
+	atomic64_set_release(&e->seq, 2ull * ticket);
 }
 
 /*
@@ -402,42 +314,39 @@ static inline int ane_timeline_show(struct seq_file *m, void *v)
 	struct drm_debugfs_entry *entry = m->private;
 	struct ane_stats_ring *ring = entry->file.data;
 	struct ane_stats_ring_entry *ring_slots = ring->slots;
-	uint32_t mask = ring->mask;
-	uint64_t head = ane_stats_atomic64_read(&ring->head);
-	uint64_t live = head < (uint64_t)mask + 1ull ? head : (uint64_t)mask + 1ull;
-	uint64_t i;
+	u32 mask = ring->mask;
+	u64 head = atomic64_read(&ring->head);
+	u64 live = head < (u64)mask + 1ull ? head : (u64)mask + 1ull;
+	u64 i;
 
-	seq_printf(m, "# ane_timeline: seq submit_ns start_ns end_ns tasks rc tmst (tmst raw tick on ane.ko, 0 = unavailable on ane_t6021)\n");
-	/* Newest first. Submission ticket t lives in slot (t - 1) & mask
+	seq_puts(m,
+		 "# ane_timeline: seq submit_ns start_ns end_ns tasks rc tmst (tmst raw tick on ane.ko, 0 = unavailable on ane_t6021)\n");
+	/*
+	 * Newest first. Submission ticket t lives in slot (t - 1) & mask
 	 * and prints once complete() commits seq = 2*t; anything else
-	 * (odd in-flight seq, stale slot) is skipped. */
+	 * (odd in-flight seq, stale slot) is skipped.
+	 */
 	for (i = 0; i < live; i++) {
-		uint64_t ticket = head - i;
+		u64 ticket = head - i;
 		struct ane_stats_ring_entry *e =
 			&ring_slots[(size_t)(ticket - 1ull) & mask];
-		uint64_t seq = ane_stats_atomic64_read_acquire(&e->seq);
-		uint64_t submit = ane_stats_atomic64_read(&e->submit_ns);
-		uint64_t st = ane_stats_atomic64_read(&e->start_ns);
-		uint64_t en = ane_stats_atomic64_read(&e->end_ns);
-		uint32_t tasks = ane_stats_atomic_read(&e->tasks);
-		uint32_t rc = ane_stats_atomic_read(&e->rc);
-		uint64_t tmst = ane_stats_atomic64_read(&e->tmst);
+		u64 seq = atomic64_read_acquire(&e->seq);
+		u64 submit = atomic64_read(&e->submit_ns);
+		u64 st = atomic64_read(&e->start_ns);
+		u64 en = atomic64_read(&e->end_ns);
+		u32 tasks = atomic_read(&e->tasks);
+		u32 rc = atomic_read(&e->rc);
+		u64 tmst = atomic64_read(&e->tmst);
 
 		if (seq != 2ull * ticket)
 			continue; /* in flight or stale; never printed */
 		seq_printf(m, "%llu %llu %llu %llu %u %u %llu\n",
-			   (unsigned long long)(2ull * ticket),
-			   (unsigned long long)submit,
-			   (unsigned long long)st,
-			   (unsigned long long)en,
-			   tasks, (unsigned)rc,
-			   (unsigned long long)tmst);
+			   2ull * ticket, submit, st, en, tasks, rc, tmst);
 	}
 	return 0;
 }
 
 #define ANE_STATS_RING_ORDER_DEFAULT 8  /* 256 slots */
-#define ANE_STATS_RING_ORDER_MAX     10 /* 1024 slots */
 
 /*
  * Accounting rule (coreglass producer contract): jobs counts completed
@@ -470,28 +379,29 @@ static inline int ane_timeline_show(struct seq_file *m, void *v)
  * Over the timeline the reported value is non-decreasing: folds only
  * add, and at a close the live tail equals the fold.
  */
-static inline uint64_t ane_stats_snapshot(const struct ane_stats_counters *ctrs)
+static inline u64 ane_stats_snapshot(const struct ane_stats_counters *ctrs)
 {
-	uint64_t raw, busy = 0, now, s = 0;
-	uint32_t inflight;
+	u64 raw, busy = 0, now, s = 0;
+	u32 inflight;
 
 	for (;;) {
-		inflight = ane_stats_atomic_read_acquire(&ctrs->inflight);
+		inflight = atomic_read_acquire(&ctrs->inflight);
 		if (inflight == ANE_STATS_INFLIGHT_TRANS)
 			continue; /* close/open in progress: spin it out */
-		raw = ane_stats_atomic64_read(&ctrs->busy_ns);
-		if (inflight) {
-			s = ane_stats_atomic64_read(&ctrs->last_busy_end);
-		}
-		now = ane_stats_now_ns();
-		/* Recheck after the timestamp: a fold that landed before
+		raw = atomic64_read(&ctrs->busy_ns);
+		if (inflight)
+			s = atomic64_read(&ctrs->last_busy_end);
+		now = ktime_get_ns();
+		/*
+		 * Recheck after the timestamp: a fold that landed before
 		 * `now` changes busy_ns and retries; one that lands
 		 * after is genuinely later than `now`, so the value is
-		 * exact, never an overshoot. */
-		if (ane_stats_atomic64_read(&ctrs->busy_ns) != raw ||
-		    ane_stats_atomic_read(&ctrs->inflight) != inflight ||
+		 * exact, never an overshoot.
+		 */
+		if (atomic64_read(&ctrs->busy_ns) != raw ||
+		    atomic_read(&ctrs->inflight) != inflight ||
 		    (inflight &&
-		     ane_stats_atomic64_read(&ctrs->last_busy_end) != s))
+		     atomic64_read(&ctrs->last_busy_end) != s))
 			continue;
 		busy = raw;
 		if (inflight && now > s)
@@ -501,23 +411,12 @@ static inline uint64_t ane_stats_snapshot(const struct ane_stats_counters *ctrs)
 	return busy;
 }
 
-#ifdef __KERNEL__
 static inline ssize_t ane_stats_emit(char *buf,
 				     const struct ane_stats_counters *ctrs)
 {
 	return sysfs_emit(buf, "busy_ns %llu\njobs %llu\n",
 			  (unsigned long long)ane_stats_snapshot(ctrs),
-			  (unsigned long long)ane_stats_atomic64_read(&ctrs->jobs));
+			  (unsigned long long)atomic64_read(&ctrs->jobs));
 }
-#else
-static inline int ane_stats_emit(char *buf,
-				 const struct ane_stats_counters *ctrs)
-{
-	return snprintf(buf, ANE_STATS_EMIT_MAX,
-			"busy_ns %llu\njobs %llu\n",
-			(unsigned long long)ane_stats_snapshot(ctrs),
-			(unsigned long long)ane_stats_atomic64_read(&ctrs->jobs));
-}
-#endif /* __KERNEL__ */
 
 #endif /* __ANE_STATS_H__ */
