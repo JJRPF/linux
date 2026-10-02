@@ -5,7 +5,7 @@
 #   ... | bash -s -- --read-only      install, but never let the driver write to the enclave
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
 #
-# Kernel: iconidentify/aurora-linux custom/sep (df7cb9bbd487), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (0cde04307749), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
 # decoder (#45), the M2 Max (t6021) profile and the consolidated Touch ID
 # series (aurora-silicon/linux#69: matching after a reboot on every profile,
@@ -26,6 +26,9 @@
 # 11.22 installs the VA-API bridge for the video decoder too, so players use
 # the hardware decoder instead of falling back to software, and
 # aurora-touchid-setup --help prints its usage instead of starting an enrolment.
+# The display manager waits (up to 30 s) for the Apple display driver, so a
+# late driver can't leave the built-in screen black, and reloading the Touch ID
+# driver on M1 is refused with "reboot to re-attach" instead of hanging.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -54,7 +57,7 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.21
+VERSION=7.1.12.aurora2-11.22
 TAG=sep-7.1.12.aurora2-11.22
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
@@ -63,10 +66,10 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 0010d9572a4362d321e6431a32b1ad97a44afe70bd6c0771615d84090fa368ff"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 69669048a7f2cdd1d970a4c02f63b76601e5c050a831287927a8ce1266a31f63"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 7c185cd243eb56ff285809a4bc59e49805d5db7d5c73f3f7aac2f73d3d87a4f9"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst baf0dae8e7621c3a10ba8302d3891113ebb6e0cf43c603751b7c9fbf5b199d3a"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
-  "aurora-touchid-20261002-1-any.pkg.tar.zst 7a2da780f909fce8c6b2e7f378de8a7f96ffc01c0601940cbf48a65e833f70c4"
+  "aurora-touchid-20261002-1-any.pkg.tar.zst a9dda6e0526874e4ac760629f3aa5bd37421379a1d8af34000f3dc7b73a21b17"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
 )
 PINNED="linux-aurora linux-aurora-headers libfprint m1n1-aurora"
