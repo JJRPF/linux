@@ -5,7 +5,7 @@
 #   ... | bash -s -- --read-only      install, but never let the driver write to the enclave
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
 #
-# Kernel: iconidentify/aurora-linux custom/sep (e11a8bc74cb8), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (77542ad1e56c), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
 # decoder (#45), the M2 Max (t6021) profile and the consolidated Touch ID
 # series (aurora-silicon/linux#69: matching after a reboot on every profile,
@@ -14,6 +14,12 @@
 # through one dock on every M2 Pro/Max laptop (aurora-silicon/linux#8, with
 # #46, #50 and #64), and the MacBook Neo (J700) work from #40, #42,
 # #43, #54 and #55, including its Touch ID device tree.
+# 11.20 adds Touch ID on the MacBook Air M2 15" (J415, aurora-silicon/linux#152),
+# a retry from a fresh sensor registration when the first sensor patch fails at
+# boot, battery time estimates that read "no data" instead of 0 (#53), the
+# Omarchy boot logo in place of Tux, and aurora-wip through 3bb0a6104a11 (the
+# MacBook Neo video decoder, PCIe bring-up and radio drivers, inert elsewhere).
+# On a MacBook Neo the script keeps the Neo's own m1n1.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -42,8 +48,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.17
-TAG=sep-7.1.12.aurora2-11.18
+VERSION=7.1.12.aurora2-11.20
+TAG=sep-7.1.12.aurora2-11.20
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -51,8 +57,8 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 47a0ff9f8c8fc00edd3485668e0c71cc6d43a846d2dbf7abb160fbe2f833704e"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 0fbb3c6f2c8c2bfc672ad02cf40ed50a418a5cdbebbc140eb00bd9cc017be6f4"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst c8f000aa2541256e78c3b53e7d66068559357644e75f259ddbc12538105eccb0"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst f1eb3174f6f9c1f0071446f36b39ef978466cb7d51b6cd622aa23c1208fca921"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
   "aurora-touchid-20261001-1-any.pkg.tar.zst bc6438d23dc2aae2766677f41f3f6d61ec3716df55c3b7a9c2cf93a027c68660"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
