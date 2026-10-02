@@ -644,7 +644,7 @@ static ssize_t ane_stats_show(struct device *dev,
 {
 	struct ane_device *ane = dev_get_drvdata(dev);
 
-	return ane_stats_emit(&ane->stats_ctrs, buf);
+	return ane_stats_emit(buf, &ane->stats_ctrs);
 }
 static DEVICE_ATTR_RO(ane_stats);
 
@@ -1119,7 +1119,7 @@ static int ane_platform_probe(struct platform_device *pdev)
 
 	if (ane->stats_slots)
 		drm_debugfs_add_file(drm, "ane_timeline",
-				     ane_stats_timeline_show,
+				     ane_timeline_show,
 				     &ane->stats_ring);
 
 	err = drm_dev_register(drm, 0);
