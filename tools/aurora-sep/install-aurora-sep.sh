@@ -120,6 +120,13 @@ boot_chain() {
   fi
 }
 
+# The MacBook Neo (T8140) boots an m1n1 built from aurora-silicon's J700
+# branch. m1n1-aurora has no T8140 support, so on a Neo this script never
+# installs it or the stock m1n1 over the one the Mac already boots.
+is_neo() {
+  tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null | grep -qx 'apple,t8140'
+}
+
 current_kernel() {
   if pacman -Q linux-aurora >/dev/null 2>&1; then echo linux-aurora
   elif pacman -Q linux-asahi >/dev/null 2>&1; then echo linux-asahi
@@ -414,6 +421,10 @@ install_all() {
   trap 'rm -rf "${work:-}"' EXIT
   for entry in "${PACKAGES[@]}"; do
     read -r file sha <<<"$entry"
+    if [[ $file == m1n1-aurora-* ]] && is_neo; then
+      say "Keeping this MacBook Neo's own m1n1 (m1n1-aurora has no T8140 support)"
+      continue
+    fi
     say "Downloading $file"
     curl -fL --retry 3 --progress-bar -o "$work/$file" "$RELEASE_URL/$file" ||
       die "could not download $file from $TAG.
@@ -483,9 +494,15 @@ uninstall_all() {
   $sudo systemctl disable apple-sep.path apple-sep.service 2>/dev/null || true
   remove_pin
   snapshot "removing aurora-sep"
-  say "Reinstalling $previous, the stock m1n1 and the stock libfprint"
+  local m1n1=m1n1
+  if is_neo; then
+    m1n1=
+    say "Reinstalling $previous and the stock libfprint; this MacBook Neo keeps its own m1n1"
+  else
+    say "Reinstalling $previous, the stock m1n1 and the stock libfprint"
+  fi
   $sudo pacman -Rdd --noconfirm aurora-touchid 2>/dev/null || true
-  $sudo pacman -Sy --noconfirm --ask 4 "$previous" "$previous-headers" libfprint m1n1
+  $sudo pacman -Sy --noconfirm --ask 4 "$previous" "$previous-headers" libfprint $m1n1
   # Restore the stock update-m1n1 configuration on either chain before the
   # rebuild below, so boot.bin goes back to the packaged m1n1 and DTBs.
   if [[ $(boot_chain) != grub ]]; then
