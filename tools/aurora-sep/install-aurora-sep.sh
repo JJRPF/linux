@@ -32,6 +32,9 @@
 # 11.23 routes USB-C displays on the M2 Pro/Max MacBook Pros in the order the
 # compositor pairs them, so two monitors attached at boot each keep their own
 # modes, and describes the Touch ID sensor on every M2 Pro/Max MacBook Pro.
+# 11.24 adds Touch ID on the MacBook Pro 14"/16" M1 Max and the MacBook Air 13"
+# M2, untested on both. On those boards the script first keeps the boot.bin the
+# Mac booted with on the EFI partition and prints how to restore it from macOS.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -60,8 +63,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.23
-TAG=sep-7.1.12.aurora2-11.23
+VERSION=7.1.12.aurora2-11.24
+TAG=sep-7.1.12.aurora2-11.24
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -69,8 +72,8 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 1542de460b3ece734194145c89f3a4fab7c75f063fea0e5312012cfd5f32336a"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst a2ac1c3e0682e32029ace86b5af4e5e4e5aba3e483a05a0752b28c97ae8c2590"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 8447aac136a5814bb80d95e5394d63d1ee4702f8d88830393a952179c7e40183"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst d358e06b7238157e105ddce77ffd59bad8a709f31f041ab741f7d22dc811b494"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
   "aurora-touchid-20261002-1-any.pkg.tar.zst a9dda6e0526874e4ac760629f3aa5bd37421379a1d8af34000f3dc7b73a21b17"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
@@ -143,6 +146,48 @@ boot_chain() {
 # installs it or the stock m1n1 over the one the Mac already boots.
 is_neo() {
   tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null | grep -qx 'apple,t8140'
+}
+
+# Boards whose Touch ID support nobody has booted yet. Once a board's device
+# tree names the enclave, m1n1 needs two boot manifests from the platform for
+# it, and a board without them stops in m1n1 before any boot entry. Every
+# board checked so far has them; these have not been checked.
+UNPROVEN_SEP_BOARDS="j314c j316c j413"
+
+this_board() {
+  tr '\0' '\n' </proc/device-tree/compatible 2>/dev/null | sed -n '1s/^apple,//p'
+}
+
+# Before anything rebuilds boot.bin on such a board, keep the one this boot
+# came up on next to it on the EFI partition, where macOS can reach it, and
+# say how to put it back. A later run keeps the first copy.
+unproven_board_backup() {
+  local board target keep uuid
+  board=$(this_board)
+  [[ -n $board && " $UNPROVEN_SEP_BOARDS " == *" $board "* ]] || return 0
+  for target in /boot/efi/m1n1/boot.bin /boot/m1n1/boot.bin; do
+    [[ -f $target && $(findmnt -no FSTYPE --target "$target") == vfat ]] || continue
+    keep=$target.before-$VERSION
+    [[ -f $keep ]] || $sudo cp "$target" "$keep" ||
+      die "could not keep a copy of $target; nothing was installed"
+    uuid=$(findmnt -no PARTUUID --target "$target")
+    warn "Touch ID on this Mac model ($board) is new in $VERSION, and nobody has
+    booted it on this model yet. If the Mac stops in m1n1 after this install (m1n1
+    text on screen, often \"No valid payload found\", and no boot menu), put the
+    boot loader it booted with back from macOS:
+      1. Hold the power button until the Mac turns off, then press and hold it
+         again for the startup options, and start macOS (or Options, then
+         Utilities > Terminal).
+      2. In Terminal, run: diskutil list
+         Find the partition whose UUID is $uuid (any case) with:
+           diskutil info diskNsM | grep -i 'partition uuid'
+      3. sudo diskutil mount diskNsM   (it prints the /Volumes path)
+      4. cp '<that path>/m1n1/boot.bin.before-$VERSION' '<that path>/m1n1/boot.bin'
+    The copy is kept at $keep. Either way, please report it at
+    https://github.com/iconidentify/aurora-linux/issues"
+    return 0
+  done
+  die "could not find m1n1's boot.bin on the EFI partition to keep a copy of; nothing was installed"
 }
 
 current_kernel() {
@@ -453,6 +498,8 @@ install_all() {
   done
 
   snapshot "aurora-sep $VERSION"
+  # Before pacman's update-m1n1 hook rebuilds boot.bin below.
+  is_neo || unproven_board_backup
   $sudo install -d "$STATE"
   if [[ ! -f $STATE/previous && $chain == grub ]]; then
     keep_grub_fallback "$kernel"
@@ -638,7 +685,9 @@ SAFETY, NON-NEGOTIABLE
           apple_sep lines at all. Capture the whole block either way.
    If the profile line says a SoC you did not expect, report that verbatim.
    On every MacBook Pro M2 Pro/Max (J414s, J414c, J416s, J416c) it reads
-   "T6020/J414s"; that is expected.
+   "T6020/J414s", on the MacBook Pro 14"/16" M1 Max (J314c, J316c)
+   "T6000/J316s", and on the MacBook Air 13" M2 (J413) "T8112/J415"; those are
+   expected.
    If "CREATE_KEYBAG" fails with status -13, quote your system-fw-version.
    Every M2-family Mac that has created its keybag was on 26.6.x; on an older
    one, update macOS to 26.6.x, boot back into Linux, re-run the installer and
@@ -739,8 +788,10 @@ SAFETY, NON-NEGOTIABLE
    Report "not tested" honestly rather than guessing, for any of the above.
 
 HOW TO REPORT
-  Post one comment on the PR you were given (the SEP work lives on
-  omacom/linux#7). Structure it exactly like this:
+  Open one issue per Mac at https://github.com/iconidentify/aurora-linux/issues
+  (not on omacom/linux#7 any more), with the first line of the report as its
+  title. Post later results for the same Mac as comments on that issue.
+  Structure it exactly like this:
 
     # <board> (<marketing name>): <one-line outcome>
     **Machine:** apple,jXXX / apple,tXXXX, <model>
