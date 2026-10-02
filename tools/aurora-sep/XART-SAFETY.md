@@ -20,12 +20,11 @@ state. Do not enable it on other installations without equivalent checks.
   locator failure: the highest-scoring window begins 90 APFS blocks after the
   true file start and extends beyond `.gl`. This proves ambiguity in that
   locator, **not** the cause of the previously damaged installation.
-- Static inspection of the macOS 27.2 AppleSEPManager kernel collection found
-  `gl_rec_write` allocating a fresh 0x9000-byte slot, writing it, then clearing
-  0x1000 bytes at the former slot. The low-level write path also calls a disk
-  cache-synchronization ioctl. `gl_fixup_rev_init` validates records and
-  handles duplicates during open. These observations do not prove that our
-  APFS ownership and failure ordering match macOS.
+- The expected write order is: allocate a fresh 0x9000-byte slot, write it,
+  then clear 0x1000 bytes at the former slot, with a disk cache synchronization
+  after the write. Records are validated and duplicates handled when the file
+  is opened. These observations do not prove that our APFS ownership and
+  failure ordering match macOS.
 
 ## Before authorizing writes
 

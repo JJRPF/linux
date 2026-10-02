@@ -164,8 +164,7 @@ impl SepData {
         }
 
         let sized_ms = sks_timeout_for(img.len());
-        // The 13.5 key store is waited on as sep_deliver_msg_gated does:
-        // getAdjustedTimeout(0x1770), 6000 ms per wait (0xfffffe0009945a14).
+        // The 13.5 key store is given 6000 ms per wait.
         // On a j313 a CREATE took
         // 1.6 s and a COPY 1.66 s, close enough to the 2 s base that a slow
         // one would be abandoned mid-way through its xART writes.
@@ -313,10 +312,8 @@ impl SepData {
         self.sks_seal(&op, &body)
     }
 
-    /// `0x2a` set_env, as `AppleKeyStore::set_env(false)` (0xfffffe000994a168)
-    /// builds it: a 0x40c-byte environment `{1, mode, 4, 0x400 zero bytes}`
-    /// (0x…a1a0-a1e0) sent by `__ipc_set_env` (0x…9ddc) as struct version 0,
-    /// u64 1, blob (`_code_ipc_set_env` 0x…4b64).
+    /// `0x2a` set_env with `false`: a 0x40c-byte environment
+    /// `{1, mode, 4, 0x400 zero bytes}`, sent as struct version 0, u64 1, blob.
     fn sks_req_set_env(&self, mode: u32) -> Result<SksRequest> {
         let op = crate::sks::sks_set_env();
         let mut env = KVec::new();
@@ -331,10 +328,10 @@ impl SepData {
         self.sks_seal(&op, &body)
     }
 
-    /// `AppleKeyStore::init_sep_endpoint` (0xfffffe0009946cdc) on the 13.5 key
-    /// store, before any other request: `0x4d`, whose capability word sets the
-    /// IPC header version to `min(word, 2)` (0x…6dc0-6dd0), then `set_env`
-    /// (0x…6e64). Returns false if the key store must stay closed this boot.
+    /// Endpoint init on the 13.5 key store, before any other request: `0x4d`,
+    /// whose capability word sets the IPC header version to `min(word, 2)`,
+    /// then `set_env`. Returns false if the key store must stay closed this
+    /// boot.
     /// The T6020 path sends nothing here.
     pub(crate) fn sks_init_endpoint(&self) -> bool {
         let profile::KeyStore::Sepos13 {
@@ -379,7 +376,7 @@ impl SepData {
             dev_err!(self.dev, "sks: SET_ENV got no reply\n");
             return false;
         };
-        // The reply is the struct-version word 0 alone (0x…4c44-4c5c).
+        // The reply is the struct-version word 0 alone.
         let accepted = self
             .sks_report_response(c"SET_ENV", &out)
             .is_some_and(|body| body.len() == 4 && image::operation_status(body) == Some(0));
@@ -396,9 +393,8 @@ impl SepData {
         true
     }
 
-    /// The designate struct version, which the reply echoes. 13.5's
-    /// `_code_ipc_make_system_keybag` (0xfffffe000995fd8c) takes version 0
-    /// only (0x…fe78).
+    /// The designate struct version, which the reply echoes. The 13.5 key store
+    /// takes version 0 only.
     fn sks_designate_variant(&self) -> u32 {
         match self.profile.key_store {
             profile::KeyStore::Sepos13 { .. } => crate::sks::SKS_DESIGNATE_VERSION_13,
@@ -406,9 +402,8 @@ impl SepData {
         }
     }
 
-    /// `0x0d` designate. On 13.5 this is `identity_load`'s make-system-keybag
-    /// (0xfffffe000994ba48-ba5c): source handle, session, an empty blob and
-    /// nothing after it.
+    /// `0x0d` designate. On 13.5 this is the make-system-keybag request: source
+    /// handle, session, an empty blob and nothing after it.
     fn sks_req_designate(&self, d: &crate::sks::Designation, secret: &[u8]) -> Result<SksRequest> {
         let mut body = image::Body::new();
         body.put_u32(self.sks_designate_variant())?;
@@ -494,11 +489,7 @@ impl SepData {
     }
 
     /// `0x18` device-state transition to unlocked, the 13.5 identity-session
-    /// unlock. `AKSIdentityUnlockSession` (user-client selector 0x7b) reaches
-    /// `unlock_the_device(client, h, secret, 5)` (0xfffffe000993cee0, called at
-    /// 0x…15a4), which sends `device_state_transition` with state 0 and flags 0
-    /// (0x…cf04-cf0c) through `__ipc_device_state_transition`
-    /// (0xfffffe0009958204): struct version 0 only (0x…200c), u64 client, u32
+    /// unlock: state 0 and flags 0. Struct version 0 only, u64 client, u32
     /// handle, u32 state, u64 flags, blob secret. The reply is the version word
     /// and two u64.
     fn sks_req_device_state_unlock(
@@ -580,10 +571,9 @@ impl SepData {
         }
         // The 13.5 (T8103) and T6020 enclaves encode the identity bag
         // differently; the per-SoC profile carries the field values (see
-        // profile::KeybagCreate). On 13.5 this is identity_create's
-        // __ipc_create_keybag_v2 (0xfffffe0009955ce0): secret, an empty second
-        // blob and the 16-byte identity UUID, nothing after it; the codec
-        // (_code_ipc_create_keybag 0xfffffe000995de6c) decodes exact-length.
+        // profile::KeybagCreate). On 13.5 the request is: secret, an empty
+        // second blob and the 16-byte identity UUID, nothing after it, decoded
+        // as an exact-length message.
         let enc = &self.profile.keybag_create;
         let mut body = image::Body::new();
         body.put_u32(enc.variant)?;
@@ -688,8 +678,8 @@ impl SepData {
             self.sks_mark_create_refused(slot, out.reply.status);
             return false;
         };
-        // 13.5 replies with the struct version and the handle alone
-        // (0x…e11c-e12c); the T6020 reply adds a blob.
+        // 13.5 replies with the struct version and the handle alone; the T6020
+        // reply adds a blob.
         let reply_min = match self.profile.key_store {
             profile::KeyStore::Sepos13 { .. } => 8,
             profile::KeyStore::Variant5 => 12,
@@ -731,9 +721,9 @@ impl SepData {
             return false;
         }
         let handle = crate::sks::KeyBagHandle::from_create_reply(raw_handle);
-        // identity_create reads no UUID back: 13.5 names the identity by the
-        // UUID it was created with, and identity_save (0xfffffe000994b1cc) is
-        // just the copy below, then the unload.
+        // No UUID is read back on 13.5: the identity is named by the UUID it
+        // was created with, and saving it is just the copy below, then the
+        // unload.
         let bag_uuid = match self.profile.key_store {
             profile::KeyStore::Sepos13 { .. } => None,
             profile::KeyStore::Variant5 => {
@@ -890,7 +880,7 @@ impl SepData {
     }
 
     pub(crate) fn sks_health_check(&self, why: &CStr) -> Option<Healthy> {
-        // macOS 13.5 sends 0x4d once, at endpoint init, never again.
+        // 0x4d is sent once, at endpoint init, never again.
         if self.profile.key_store != profile::KeyStore::Variant5 {
             if !self.sks_initialized.load(Relaxed) {
                 dev_err!(
@@ -926,8 +916,8 @@ impl SepData {
         &self,
         stored: &keybag::StoredKeyBag,
     ) -> Option<(crate::sks::KeyBagHandle, [u8; keybag::UUID_LEN])> {
-        // 13.5 identity_open addresses an enclave-resident identity bag by
-        // its generated UUID. Older J313 records instead store the bag's
+        // On 13.5 the enclave holds the identity bag and addresses it by its
+        // generated UUID. Older J313 records instead store the bag's
         // read-back UUID and a wrapped bag, which must be loaded as a blob.
         let uuid_load = matches!(self.profile.key_store, profile::KeyStore::Sepos13 { .. })
             && stored.uuid_provenance() == keybag::UuidProvenance::AsGenerated;
@@ -1235,7 +1225,7 @@ pub(crate) fn sks_set_env() -> SksOp {
     }
 }
 pub(crate) const SKS_SET_ENV_LEN: usize = 12 + 0x400;
-/// Third environment word for `set_env(false)`, the call init_sep_endpoint makes.
+/// Third environment word for `set_env(false)`, the call endpoint init makes.
 pub(crate) const SKS_SET_ENV_FALSE: u32 = 4;
 
 const OP_SKS_COPY_UUID: u8 = 0x06;

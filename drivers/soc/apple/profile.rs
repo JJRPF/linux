@@ -94,7 +94,7 @@ pub(crate) struct SensorProfile {
 
 /// Identity keybag `CREATE_KEYBAG` field encoding. The first word is the
 /// codec's struct version: the 13.5 enclave (T8103) takes versions 0-2 only
-/// and macOS creates an identity with version 2, while the T6020 enclave takes
+/// and an identity is created with version 2, while the T6020 enclave takes
 /// variant 5. Kept per-SoC so the T8103 path is correct without disturbing the
 /// proven T6020 encoding (hardware-verified for enrol, match, and reboot).
 pub(crate) struct KeybagCreate {
@@ -108,14 +108,14 @@ pub(crate) struct KeybagCreate {
 }
 
 /// Which key-store protocol the enclave speaks. It follows the sepOS the
-/// firmware hands the SEP, not the SoC alone: the T8103 stub boots macOS 13.5
-/// (22G74)'s sepOS, whose request shapes are those of the 13.5
-/// `AppleSEPKeyStore`; the T6020 sepOS is newer.
+/// firmware hands the SEP, not the SoC alone: the T8103 stub boots the 13.5
+/// (22G74) sepOS, whose request shapes are the 13.5 ones; the T6020 sepOS is
+/// newer.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyStore {
-    /// macOS 13.5's key store. Before any other request the endpoint is
-    /// initialised as `AppleKeyStore::init_sep_endpoint` does it: `0x4d`, then
-    /// `set_env` carrying the ADT's `/defaults` `cpx-encryption-mode`.
+    /// The 13.5 key store. Before any other request the endpoint is
+    /// initialised with `0x4d`, then `set_env` carrying the ADT's `/defaults`
+    /// `cpx-encryption-mode`.
     Sepos13 { cpx_encryption_mode: u32 },
     /// The hardware-verified T6020 encoding (variant-5 create).
     Variant5,
@@ -166,8 +166,8 @@ const T8103: PlatformProfile = PlatformProfile {
     dart_range_required: false,
     wide_dma_mask: false,
     firmware_region: c"sepfw",
-    // macOS 13.5's AppleKeyStore::identity_create (0xfffffe000994b2d8):
-    // version 2, type 0x400000, parent -1 (it accepts only -1 or <= -10).
+    // 13.5 identity create: version 2, type 0x400000, parent -1 (the enclave
+    // accepts only -1 or <= -10).
     keybag_create: KeybagCreate {
         variant: 2,
         bag_type: 0x40_0000,
