@@ -4,8 +4,9 @@
 #   curl -fsSL https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh | bash
 #   ... | bash -s -- --read-only      install, but never let the driver write to the enclave
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
+#   ... | bash -s -- --reset-touchid  start Touch ID over: new keybag, enrol again
 #
-# Kernel: iconidentify/aurora-linux custom/sep (fd04a98e74da), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (f62ac02e9cb0), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
 # decoder (#45), the M2 Max (t6021) profile and the consolidated Touch ID
 # series (aurora-silicon/linux#69: matching after a reboot on every profile,
@@ -701,6 +702,102 @@ uninstall_all() {
   say "Done. Reboot to run $previous."
 }
 
+# --reset-touchid: start Touch ID over on this Mac. For a Mac whose stored
+# identity keybag no longer loads, such as an M2 Pro/Max enrolled on system
+# firmware 26.2 or earlier and then updated. Moves the SEP driver's state and
+# fprintd's prints for the Apple sensor aside; the next boot creates a new
+# keybag, and every finger is enrolled again. The old keybag stays in the
+# enclave unused: there is no way to delete it.
+#
+# The keybag is last, so a reset that stops partway leaves it in place and
+# the next boot does not create a second one next to the old Catacombs.
+TOUCHID_STATE_FILES=(
+  /var/lib/aurora-sep-host-state.bin
+  /var/lib/apple-sep-catacomb-master.bin
+  /var/lib/apple-sep-catacomb-owner.bin
+  /var/lib/apple-sep-catacomb-user.bin
+  /var/lib/aurora-sep-refkey.bin
+  /var/lib/aurora-sep-refkey-v2.bin
+  /var/lib/aurora-sep-keybag.bin
+)
+
+sep_diag() {
+  local f
+  for f in /sys/bus/platform/devices/*.sep/diag/"$1"; do
+    [[ -r $f ]] && { cat "$f"; return; }
+  done
+  echo none
+}
+
+reset_touchid() {
+  local yes=0 force=0 arg f d keybag found=0
+  for arg in "$@"; do
+    case $arg in
+      --yes) yes=1 ;;
+      --force) force=1 ;;
+      *) die "unknown option $arg for --reset-touchid (--yes, --force)" ;;
+    esac
+  done
+  grep -qa 'apple,' /proc/device-tree/compatible 2>/dev/null || die "this is not an Apple Silicon Mac"
+  [[ -f $MODPROBE_CONF ]] &&
+    die "this Mac was installed read-only ($MODPROBE_CONF): a new keybag needs enclave writes. Delete that file first if you mean to allow them."
+  for f in "${TOUCHID_STATE_FILES[@]}"; do [[ -e $f ]] && found=1; done
+  ((found)) || die "no Touch ID state on this Mac; nothing to reset"
+
+  # Only a keybag the driver could not load is worth replacing. It loads the
+  # keybag the first time the sensor is opened, so ask fprintd once first.
+  keybag=$(sep_diag keybag)
+  if [[ $keybag == unknown ]]; then
+    timeout 20 $sudo fprintd-list root >/dev/null 2>&1 || true
+    keybag=$(sep_diag keybag)
+  fi
+  if [[ $keybag != failed ]]; then
+    ((force)) || die "the Touch ID keybag is not broken (driver reports keybag=$keybag, touchid=$(sep_diag touchid)).
+    A reset would throw away a working keybag. If Touch ID still fails and you mean it, run again with --reset-touchid --force."
+    warn "resetting although the driver reports keybag=$keybag (--force)"
+  fi
+
+  warn "this removes every enrolled fingerprint on this Mac and creates a new Touch ID keybag at the next boot.
+    Anything sealed with the Secure Enclave (kernel trusted keys) can no longer be unsealed.
+    The old keybag stays in the Secure Enclave, unused; it cannot be deleted, and this cannot be undone once the Mac has rebooted."
+  if ((!yes)); then
+    # Piped from curl, stdin is the script; ask on the terminal, if there is one.
+    { : </dev/tty; } 2>/dev/null || die "no terminal to confirm on; run again with --reset-touchid --yes"
+    local answer=""
+    printf 'Type RESET to continue: ' >/dev/tty
+    read -r answer </dev/tty || true
+    [[ $answer == RESET ]] || die "not reset"
+  fi
+
+  # Until the reboot nothing may touch the sensor: a match or enrolment would
+  # write new state behind the move. The runtime mask goes away at boot. A
+  # verify already running finishes its save within about a second.
+  $sudo systemctl mask --runtime --now fprintd.service
+  sleep 3
+
+  # Outside /var/lib/aurora-sep, which --uninstall removes. Each move is
+  # recorded so that a failure puts everything back as it was.
+  local dest src to moved=() sources=()
+  dest=/var/lib/aurora-sep-touchid-reset-$(date +%Y%m%d-%H%M%S)
+  # fprintd's directories are root-only, so look for them as root.
+  while IFS= read -r d; do sources+=("$d"); done < <(
+    $sudo find /var/lib/fprint -mindepth 2 -maxdepth 2 -type d -name apple-sep 2>/dev/null)
+  for f in "${TOUCHID_STATE_FILES[@]}"; do [[ -e $f ]] && sources+=("$f"); done
+  for src in "${sources[@]}"; do
+    case $src in
+      /var/lib/fprint/*) to=$dest/fprint/$(basename "$(dirname "$src")")/apple-sep ;;
+      *) to=$dest/$(basename "$src") ;;
+    esac
+    if ! { $sudo mkdir -p "$(dirname "$to")" && $sudo mv "$src" "$to"; }; then
+      for d in "${moved[@]}"; do $sudo mv "${d#*|}" "${d%%|*}" || warn "could not put back ${d%%|*} from ${d#*|}"; done
+      die "could not move $src; put back everything already moved, so Touch ID is as it was"
+    fi
+    moved+=("$src|$to")
+  done
+  say "Moved the Touch ID state to $dest"
+  say "Reboot now. Touch ID creates its new keybag during boot; then enrol your fingers again."
+}
+
 # Printed by --agent-prompt, and pointed at from the end of a successful
 # install. This is written for an agent driving the test on a real Mac: it says
 # what to establish, what counts as a pass, and how to write it up.
@@ -972,13 +1069,15 @@ HOW TO REPORT
 PROMPT
 }
 
-preflight_needed() { case ${1:-} in --agent-prompt) return 1 ;; *) return 0 ;; esac; }
+# A reset needs none of the kernel and boot checks; it checks for itself.
+preflight_needed() { case ${1:-} in --agent-prompt | --reset-touchid) return 1 ;; *) return 0 ;; esac; }
 
 if preflight_needed "${1:-}"; then preflight; fi
 case ${1:-} in
   "") install_all ;;
   --read-only) READ_ONLY=1; install_all ;;
   --uninstall) uninstall_all ;;
+  --reset-touchid) shift; reset_touchid "$@" ;;
   --agent-prompt) t=$(newer_release); [[ -n $t ]] && warn "the current release is $t; this plan is for $TAG"; agent_prompt ;;
-  *) die "unknown option $1 (--read-only, --uninstall or --agent-prompt)" ;;
+  *) die "unknown option $1 (--read-only, --uninstall, --reset-touchid or --agent-prompt)" ;;
 esac

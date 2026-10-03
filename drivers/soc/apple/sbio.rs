@@ -1240,7 +1240,7 @@ impl SepData {
             {
                 dev_err!(
                     self.dev,
-                    "Touch ID: the keybag was made by the 13.5 key store, but this enclave speaks variant 5; if macOS was updated past 26.2, Touch ID needs a new identity keybag and new enrolments\n"
+                    "Touch ID: the keybag was made by the 13.5 key store, but this enclave speaks variant 5; if macOS was updated past 26.2, start Touch ID over (install-aurora-sep.sh --reset-touchid) and enrol again\n"
                 );
             }
             // Only the variant-5 key store records the UUID read back from
