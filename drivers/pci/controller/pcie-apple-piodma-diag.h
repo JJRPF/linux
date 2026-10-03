@@ -13,6 +13,7 @@ struct pci_dev;
 bool apple_piodma_bootstrap_enabled(void);
 int apple_piodma_bootstrap_get(struct device *host, struct device **supplier);
 int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root);
+void apple_piodma_bootstrap_admitted(struct device *supplier);
 #else
 static inline bool apple_piodma_bootstrap_enabled(void)
 {
@@ -27,6 +28,10 @@ static inline int apple_piodma_bootstrap_get(struct device *host, struct device 
 static inline int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 {
 	return -ENODEV;
+}
+
+static inline void apple_piodma_bootstrap_admitted(struct device *supplier)
+{
 }
 #endif
 #endif

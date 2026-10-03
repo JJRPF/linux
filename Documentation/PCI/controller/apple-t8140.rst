@@ -33,6 +33,14 @@ neither a performance-policy boot argument nor a sysfs policy write is needed.
 Booting with ``pcie_aspm=off`` prevents the PCI core from applying this restriction
 and radio admission fails closed.
 
+The supplier publishes radio admission only after both functions pass the
+host's identity, cold-state, memory-window and link-power checks. Both radio
+probes require that completed admission before accessing PCI or MMIO state;
+the host's downstream device-enable callback enforces the same gate for other
+drivers. This prevents a later generic rescan from enabling cached children of
+a failed admission. Each radio probe reapplies the link-power restriction, so
+a recreated ASPM link state cannot inherit an incompatible global policy.
+
 The PIODMA arena remains allocated until external reset. Controller removal,
 teardown, memory reuse and arbitrary downstream devices are unqualified.
 The host and activated Bluetooth modules are pinned until reset. Do not remove

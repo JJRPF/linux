@@ -8,7 +8,7 @@
 struct pci_dev;
 
 #if IS_ENABLED(CONFIG_PCIE_APPLE_PIODMA_DIAG)
-/* Verify that this Neo radio's supplier permanently protects retained DMA. */
+/* Require completed Neo admission and permanent retained-DMA protection. */
 int apple_piodma_radio_check(struct pci_dev *pdev);
 #else
 static inline int apple_piodma_radio_check(struct pci_dev *pdev)

@@ -996,6 +996,14 @@ static int bt7932_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	    !of_machine_is_compatible("apple,t8140") ||
 	    pci_domain_nr(pdev->bus) || pdev->bus->number != 1 || pdev->devfn != PCI_DEVFN(0, 1))
 		return -ENODEV;
+	/* Reject rescanned children of a failed admission before hardware access. */
+	ret = apple_piodma_radio_check(pdev);
+	if (ret)
+		return ret;
+	/* A remove/rescan may have recreated link state under the global policy. */
+	ret = pci_disable_link_state(pdev, PCIE_LINK_STATE_ALL);
+	if (ret)
+		return ret;
 	bt = kzalloc_obj(*bt);
 	if (!bt)
 		return -ENOMEM;
@@ -1088,10 +1096,6 @@ static int bt7932_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		goto fail;
 	bt->irq_requested = true;
-	/* The retained supplier owns the runtime suspend/kexec interlock. */
-	ret = apple_piodma_radio_check(pdev);
-	if (ret)
-		goto fail;
 	/* Refuse publication if an unload was already committed. */
 	if (!try_module_get(THIS_MODULE)) {
 		ret = -ENODEV;

@@ -98,6 +98,7 @@ struct apple_piodma_diag {
 	u64 pointer_prefix;
 	u8 secondary_bus;
 	bool retained;
+	bool radio_admitted;
 	struct notifier_block pm_notifier;
 };
 
@@ -614,6 +615,17 @@ int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 }
 EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_prime);
 
+void apple_piodma_bootstrap_admitted(struct device *supplier)
+{
+	struct apple_piodma_diag *diag = dev_get_drvdata(supplier);
+
+	if (WARN_ON_ONCE(!diag || !diag->retained))
+		return;
+	/* Publish the host's completed cold, resource and ASPM admission checks. */
+	smp_store_release(&diag->radio_admitted, true);
+}
+EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_admitted);
+
 int apple_piodma_radio_check(struct pci_dev *pdev)
 {
 	/* Acquire the supplier's permanent arena and PM/kexec guard ownership. */
@@ -624,8 +636,8 @@ int apple_piodma_radio_check(struct pci_dev *pdev)
 
 	if (!apple_piodma_bootstrap_enabled() || !diag)
 		return -ENODEV;
-	/* Pair with initialization's publication of the validated root/bus. */
-	if (!smp_load_acquire(&diag->retained) || !bridge->dev.parent ||
+	/* A retained supplier alone does not prove that host admission succeeded. */
+	if (!smp_load_acquire(&diag->radio_admitted) || !bridge->dev.parent ||
 	    pdev->vendor != PCI_VENDOR_ID_MEDIATEK ||
 	    pci_domain_nr(pdev->bus) || pdev->bus->number != diag->secondary_bus ||
 	    PCI_SLOT(pdev->devfn) ||

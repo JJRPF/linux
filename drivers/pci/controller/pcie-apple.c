@@ -33,6 +33,7 @@
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/pci-apple.h>
+#include <linux/pci-apple-piodma.h>
 #include <linux/pci-ecam.h>
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>
@@ -1837,6 +1838,13 @@ static int apple_pcie_enable_device(struct pci_host_bridge *bridge, struct pci_d
 	struct apple_pcie_port *port;
 	int idx, err;
 
+	/* A generic rescan must not enable cached children of failed admission. */
+	if (pcie->piodma_supplier && !pci_is_root_bus(pdev->bus)) {
+		err = apple_piodma_radio_check(pdev);
+		if (err)
+			return err;
+	}
+
 	/* Also cover functions discovered by a later hotplug or rescan. */
 	if (pcie->hw->tunneled)
 		pdev->dev_flags |= PCI_DEV_FLAGS_NO_D3;
@@ -2441,8 +2449,10 @@ static int apple_pcie_neo_enumerate(struct pci_host_bridge *bridge)
 		if (ret)
 			break;
 	}
-	if (!ret)
+	if (!ret) {
+		apple_piodma_bootstrap_admitted(pcie->piodma_supplier);
 		pci_bus_add_devices(root->subordinate);
+	}
 close_config:
 	if (ret)
 		WRITE_ONCE(pcie->neo_config_ready, false);
