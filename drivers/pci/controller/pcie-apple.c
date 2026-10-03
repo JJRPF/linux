@@ -2594,6 +2594,12 @@ static int apple_pcie_probe(struct platform_device *pdev)
 			return -ENODEV;
 		}
 		ret = apple_pcie_neo_enumerate(bridge);
+		if (ret && !apple_piodma_bootstrap_retained(pcie->piodma_supplier)) {
+			/* No DMA pointer escaped: unwind and allow dependency retry. */
+			pci_host_common_remove(pdev);
+			module_put(THIS_MODULE);
+			return dev_err_probe(dev, ret, "Neo bootstrap preflight failed\n");
+		}
 		if (ret)
 			dev_err(dev, "enumeration experiment failed=%d; host/supplier retained, no retry\n",
 				ret);

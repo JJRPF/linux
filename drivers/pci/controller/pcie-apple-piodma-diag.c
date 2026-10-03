@@ -102,7 +102,7 @@ struct apple_piodma_diag {
 	struct notifier_block pm_notifier;
 };
 
-/* A successful supplier probe owns its arena and guards until full reset. */
+/* A successful supplier probe owns its unpublished arena until full reset. */
 static struct apple_piodma_diag *active_diag;
 
 static bool apple_piodma_trylock_sleep(unsigned int *flags)
@@ -112,10 +112,10 @@ static bool apple_piodma_trylock_sleep(unsigned int *flags)
 		return true;
 
 	/*
-	 * Probe holds device_lock(), while system sleep holds the transition
+	 * Host probe holds device_lock(), while system sleep holds the transition
 	 * mutex before waiting for probes and taking device locks. Never wait
 	 * for that mutex here: if sleep won, defer without publishing any DMA.
-	 * If probe won, publish the veto before releasing the transition mutex.
+	 * If prime won, publish the veto before releasing the transition mutex.
 	 */
 	*flags = current->flags;
 	current->flags |= PF_NOFREEZE;
@@ -148,7 +148,8 @@ static int apple_piodma_pm_prepare(struct device *dev)
 {
 	struct apple_piodma_diag *diag = dev_get_drvdata(dev);
 
-	if (!diag || !diag->arena)
+	/* Acquire the prime's retained arena publication before permitting sleep. */
+	if (!diag || !smp_load_acquire(&diag->retained))
 		return 0;
 	/*
 	 * A /dev/snapshot file may have sent its PREPARE notifier before this
@@ -592,28 +593,62 @@ EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_get);
 int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 {
 	struct apple_piodma_diag *diag = dev_get_drvdata(supplier);
+	unsigned int sleep_flags;
 	int ret;
 
-	/* One attempt for this provider's entire lifetime, including failures. */
-	if (atomic_cmpxchg(&diag->attempted, 0, 1))
-		return -EALREADY;
+	/* Contention must not consume the one permitted hardware attempt. */
+	if (!apple_piodma_trylock_sleep(&sleep_flags))
+		return -EPROBE_DEFER;
+	ret = kexec_block();
+	if (ret) {
+		unlock_system_sleep(sleep_flags);
+		return ret == -EBUSY ? -EPROBE_DEFER : ret;
+	}
+	/* One hardware attempt, including permanent preflight failures. */
+	if (atomic_cmpxchg(&diag->attempted, 0, 1)) {
+		ret = -EALREADY;
+		goto err_kexec;
+	}
+	diag->pm_notifier.notifier_call = apple_piodma_pm_notify;
+	ret = register_pm_notifier(&diag->pm_notifier);
+	if (ret)
+		goto err_kexec;
 	ret = apple_piodma_diag_root(diag, root);
-	if (ret)
-		return ret;
-	ret = apple_piodma_diag_idle(diag);
-	if (ret)
-		return ret;
-	ret = apple_piodma_diag_initialize(diag);
+	if (!ret)
+		ret = apple_piodma_diag_idle(diag);
+	if (!ret)
+		ret = apple_piodma_diag_initialize(diag);
 	if (!ret)
 		ret = apple_piodma_diag_submit(diag, 0);
-	if (ret)
-		dev_err(supplier, "bootstrap failure=%d; retained ownership; no retry\n", ret);
-	else
+	if (ret) {
+		dev_err(supplier, "bootstrap failure=%d; %s; no retry\n", ret,
+			diag->retained ? "retained ownership" : "no hardware publication");
+		if (!diag->retained) {
+			unregister_pm_notifier(&diag->pm_notifier);
+			goto err_kexec;
+		}
+	} else {
 		dev_info(supplier, "BOOTSTRAP_VALIDATED word=%#x; one retained slot\n",
 			 diag->slots[0].result);
+	}
+	unlock_system_sleep(sleep_flags);
+	return ret;
+
+err_kexec:
+	kexec_unblock();
+	unlock_system_sleep(sleep_flags);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_prime);
+
+bool apple_piodma_bootstrap_retained(struct device *supplier)
+{
+	struct apple_piodma_diag *diag = dev_get_drvdata(supplier);
+
+	/* Acquire the prime's irreversible publication and guard ownership. */
+	return smp_load_acquire(&diag->retained);
+}
+EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_retained);
 
 void apple_piodma_bootstrap_admitted(struct device *supplier)
 {
@@ -656,7 +691,6 @@ static int apple_piodma_diag_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct apple_piodma_diag *diag;
-	unsigned int sleep_flags;
 	int i, ret;
 
 	if (!apple_piodma_bootstrap_enabled() || PAGE_SIZE != SZ_16K)
@@ -672,21 +706,6 @@ static int apple_piodma_diag_probe(struct platform_device *pdev)
 	ret = apple_piodma_diag_iommu(diag);
 	if (ret)
 		goto err_free;
-	/* Publish guards and arena atomically with respect to system sleep. */
-	if (!apple_piodma_trylock_sleep(&sleep_flags)) {
-		ret = -EPROBE_DEFER;
-		goto err_free;
-	}
-	diag->pm_notifier.notifier_call = apple_piodma_pm_notify;
-	ret = register_pm_notifier(&diag->pm_notifier);
-	if (ret)
-		goto err_sleep;
-	ret = kexec_block();
-	if (ret) {
-		if (ret == -EBUSY)
-			ret = -EPROBE_DEFER;
-		goto err_notifier;
-	}
 	pm_runtime_enable(dev);
 	ret = pm_runtime_resume_and_get(dev);
 	if (ret < 0)
@@ -701,31 +720,20 @@ static int apple_piodma_diag_probe(struct platform_device *pdev)
 			       dev_name(dev), diag);
 	if (ret)
 		goto err_arena;
-	/* The notifier and retained state also keep their device alive. */
+	/* The supplier and unpublished arena keep their device alive. */
 	get_device(dev);
 	platform_set_drvdata(pdev, diag);
-	/* Publish the arena, device reference and both guards together. */
+	/* Publish the CPU-owned arena and permanent device reference together. */
 	smp_store_release(&active_diag, diag);
-	unlock_system_sleep(sleep_flags);
 	dev_info(dev, "bootstrap supplier ready; no command submitted during probe\n");
 	return 0;
 
 err_arena:
-	/* No path after initialization may release ownership. */
-	if (WARN_ON_ONCE(diag->retained)) {
-		unlock_system_sleep(sleep_flags);
-		return 0;
-	}
 	if (diag->arena)
 		dma_free_coherent(dev, PIODMA_ARENA_SIZE, diag->arena, diag->dma);
 	pm_runtime_put_sync(dev);
 err_pm:
 	pm_runtime_disable(dev);
-	kexec_unblock();
-err_notifier:
-	unregister_pm_notifier(&diag->pm_notifier);
-err_sleep:
-	unlock_system_sleep(sleep_flags);
 err_free:
 	kfree(diag);
 	return dev_err_probe(dev, ret, "PIODMA diagnostic preflight failed\n");
@@ -733,7 +741,10 @@ err_free:
 
 static void apple_piodma_diag_shutdown(struct platform_device *pdev)
 {
-	dev_warn(&pdev->dev, "diagnostic arena retained; require full hardware reset\n");
+	struct apple_piodma_diag *diag = platform_get_drvdata(pdev);
+
+	if (READ_ONCE(diag->retained))
+		dev_warn(&pdev->dev, "diagnostic arena retained; require full hardware reset\n");
 }
 
 static const struct of_device_id apple_piodma_diag_match[] = {
