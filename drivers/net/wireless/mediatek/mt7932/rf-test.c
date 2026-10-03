@@ -178,6 +178,11 @@ static void mt_missing_policy_admission_retry_test(struct kunit *test)
 			KUNIT_EXPECT_EQ(test, mt_connect(wiphy, m->netdev, &connect), -EAGAIN);
 			break;
 		}
+		/* Assert the actual frontend queued recovery before checking that
+		 * another request cannot consume the same retry a second time.
+		 */
+		KUNIT_EXPECT_EQ(test, m->reg_generation, 8U);
+		KUNIT_EXPECT_FALSE(test, m->reg_retryable);
 		mt_retry_missing_policy(m);
 		flush_work(&m->startup_work);
 		KUNIT_EXPECT_EQ(test, m->reg_generation, 8U);
@@ -200,7 +205,101 @@ static void mt_missing_policy_admission_retry_test(struct kunit *test)
 	wiphy_free(wiphy);
 }
 
+struct mt_cal_drain_test_context {
+	struct kunit *test;
+	unsigned int commands, replies;
+};
+
+static int mt_cal_drain_test_send(struct mt7932 *m, const void *data, size_t length)
+{
+	struct mt_cal_drain_test_context *ctx = m->cal_test_context;
+	const u8 *body = data;
+	u8 reply[20] = {};
+	unsigned long flags;
+	int ret = 0;
+
+	KUNIT_EXPECT_EQ(ctx->test, m->cal_state.expected, 3U);
+	if (m->cal_state.expected != 3 || length < 20)
+		return -EPROTO;
+	ctx->commands++;
+	/* Firmware completes each logical group after its final fragment. */
+	if ((body[2] & 15) + 1 != body[2] >> 4)
+		return 0;
+	reply[3] = 1;
+	spin_lock_irqsave(&m->response_lock, flags);
+	ret = mt7932_cal_null(&m->cal_state, reply, sizeof(reply), m->smart_version);
+	if (ret > 0)
+		complete(&m->cal_response);
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	ctx->replies++;
+	return ret < 0 ? ret : 0;
+}
+
+static void mt_startup_band1_queue_drain_test(struct kunit *test)
+{
+	/* Synthetic open-container fixtures only: no unit calibration assets. */
+	static const u16 tags[] = { 0x501, 0x2001, 0x4124, 0x3126 };
+	static const u16 bytes[] = { 200, 2160, 20, 1224 };
+	struct mt_cal_drain_test_context ctx = { .test = test };
+	struct mt7932 *m = test->priv;
+	struct firmware oca = {};
+	size_t size = 16 + 20 * ARRAY_SIZE(tags), offset;
+	u8 *data;
+	unsigned int i, j;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(tags); i++)
+		size += 8 + bytes[i];
+	data = kunit_kzalloc(test, size, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, data);
+	memcpy(data, "BLOB", 4);
+	offset = 16 + 20 * ARRAY_SIZE(tags);
+	put_unaligned_be32(offset, data + 4);
+	put_unaligned_be16(12, data + 8);
+	put_unaligned_be16(ARRAY_SIZE(tags), data + 10);
+	for (i = 0; i < ARRAY_SIZE(tags); i++) {
+		u8 *entry = data + 16 + 20 * i;
+		u32 sum = 0;
+
+		put_unaligned_be16(tags[i], entry);
+		put_unaligned_be16(12, entry + 2);
+		put_unaligned_be32(offset, entry + 4);
+		put_unaligned_be32(8 + bytes[i], entry + 8);
+		memcpy(data + offset, entry, 4);
+		put_unaligned_be32(8 + bytes[i], data + offset + 4);
+		for (j = 0; j < 8 + bytes[i]; j++)
+			sum += data[offset + j];
+		put_unaligned_be32(sum, entry + 12);
+		offset += 8 + bytes[i];
+	}
+	oca.data = data;
+	oca.size = size;
+	memset(&m->cal_state, 0, sizeof(m->cal_state));
+	m->smart_version = 12;
+	m->preload_version = 1;
+	m->module_byte = 0x89;
+	m->cal_request_count = 1;
+	put_unaligned_le32(0x1000, m->cal_requests[0] + 4);
+	put_unaligned_le32(1, m->cal_requests[0] + 8);
+	put_unaligned_le32(36, m->cal_requests[0] + 12);
+	m->cal_test_send = mt_cal_drain_test_send;
+	m->cal_test_context = &ctx;
+	mutex_lock(&m->command_mutex);
+	ret = mt_cal_drain_requests(m, &oca);
+	mutex_unlock(&m->command_mutex);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, ctx.commands, 5U);
+	KUNIT_EXPECT_EQ(test, ctx.replies, 3U);
+	KUNIT_EXPECT_EQ(test, m->cal_request_count, 0U);
+	KUNIT_EXPECT_TRUE(test, m->cal_state.done);
+	KUNIT_EXPECT_FALSE(test, m->cal_state.active);
+	KUNIT_EXPECT_EQ(test, m->cal_state.error, 0);
+	m->cal_test_send = NULL;
+	m->cal_test_context = NULL;
+}
+
 static struct kunit_case mt_rf_test_cases[] = {
+	KUNIT_CASE(mt_startup_band1_queue_drain_test),
 	KUNIT_CASE(mt_missing_policy_admission_retry_test),
 	KUNIT_CASE(mt_cal_band_reply_completion_test),
 	KUNIT_CASE(mt_rf_failure_wakes_association_test),

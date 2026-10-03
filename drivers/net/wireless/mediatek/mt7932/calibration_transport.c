@@ -23,7 +23,12 @@ int mt_cal_procedure(struct mt7932 *m, struct mt7932_cal_piece *pieces,
 		ret = mt7932_cal_body(body, sizeof(body), pieces + i, context_version);
 		if (ret < 0)
 			goto fail;
-		ret = mt_request(m, 0xd6, true, true, false, body, ret);
+#if IS_ENABLED(CONFIG_MT7932_RF_KUNIT_TEST)
+		if (m->cal_test_send)
+			ret = m->cal_test_send(m, body, ret);
+		else
+#endif
+			ret = mt_request(m, 0xd6, true, true, false, body, ret);
 		if (ret)
 			goto fail;
 	}
@@ -67,7 +72,6 @@ int mt_calibration_gate(struct mt7932 *m)
 	const char *phase = "own input validation";
 	struct mt7932_cal_piece pieces[14];
 	u8 body[1028], request[16];
-	unsigned long flags;
 	unsigned int at, count, group, input_tag;
 	int ret, planned;
 
@@ -140,7 +144,27 @@ int mt_calibration_gate(struct mt7932 *m)
 			 group, pieces[at].type, pieces[at].parameter, count);
 	}
 	dev_info(&m->pdev->dev, "POWER_ON_CAL_COMPLETE: %u groups, %d fragments\n", group, planned);
-	phase = "queued D7 command/completion";
+	phase = "queued D7 planning/command/completion";
+	ret = mt_cal_drain_requests(m, oca);
+out:
+	if (ret)
+		dev_err(&m->pdev->dev, "CALIBRATION_FAILED: phase=%s error=%d\n", phase, ret);
+	release_firmware(oca);
+out_wcal:
+	release_firmware(wcal);
+	return ret;
+}
+
+/* Shared startup queue drain, entered by the serialized command owner. */
+int mt_cal_drain_requests(struct mt7932 *m, const struct firmware *oca)
+{
+	struct mt7932_cal_piece pieces[7];
+	u8 request[16];
+	unsigned long flags;
+	unsigned int at, count, input_tag;
+	int ret;
+
+	lockdep_assert_held(&m->command_mutex);
 	/* Drain already queued genuine requests without ever manufacturing one. */
 	for (at = 0; at < ARRAY_SIZE(m->cal_requests); at++) {
 		spin_lock_irqsave(&m->response_lock, flags);
@@ -157,20 +181,13 @@ int mt_calibration_gate(struct mt7932 *m)
 					  m->smart_version, m->module_byte, pieces, &input_tag);
 		if (ret < 0) {
 			mt_cal_input_error(m, ret, input_tag, "D7 plan");
-			goto out;
+			return ret;
 		}
 		ret = mt_cal_procedure(m, pieces, ret,
 				       mt7932_cal_request_replies(request), m->preload_version);
 		if (ret)
-			goto out;
+			return ret;
 		dev_info(&m->pdev->dev, "CAL_REQUEST_SERVICED: channel=%u\n", get_unaligned_le32(request + 12));
 	}
-	ret = 0;
-out:
-	if (ret)
-		dev_err(&m->pdev->dev, "CALIBRATION_FAILED: phase=%s error=%d\n", phase, ret);
-	release_firmware(oca);
-out_wcal:
-	release_firmware(wcal);
-	return ret;
+	return 0;
 }

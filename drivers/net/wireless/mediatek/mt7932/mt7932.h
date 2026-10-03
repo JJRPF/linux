@@ -65,6 +65,11 @@ struct mt7932 {
 	struct completion response;
 	struct completion cal_response;
 	struct mt7932_cal_completion cal_state;
+#if IS_ENABLED(CONFIG_MT7932_RF_KUNIT_TEST)
+	/* Hardware-free calibration transport seam; production builds omit it. */
+	int (*cal_test_send)(struct mt7932 *m, const void *body, size_t length);
+	void *cal_test_context;
+#endif
 	u8 cal_requests[32][16];
 	u8 cal_request_seq[32];
 	unsigned int cal_request_head, cal_request_count;
@@ -186,6 +191,7 @@ int mt_recovery_gate(struct mt7932 *m);
 int mt_cal_procedure(struct mt7932 *m, struct mt7932_cal_piece *pieces,
 				    unsigned int count, unsigned int logical, u8 context_version);
 int mt_calibration_gate(struct mt7932 *m);
+int mt_cal_drain_requests(struct mt7932 *m, const struct firmware *oca);
 void mt_cal_input_error(struct mt7932 *m, int error, unsigned int tag, const char *stage);
 void mt_data_clean_locked(struct mt7932 *m);
 void mt_data_clean(struct mt7932 *m);
