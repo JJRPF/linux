@@ -6,7 +6,7 @@
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
 #   ... | bash -s -- --reset-touchid  start Touch ID over: new keybag, enrol again
 #
-# Kernel: iconidentify/aurora-linux custom/sep (f62ac02e9cb0), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (9b70be708ca1), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
 # decoder (#45), the M2 Max (t6021) profile and the consolidated Touch ID
 # series (aurora-silicon/linux#69: matching after a reboot on every profile,
@@ -61,6 +61,11 @@
 # earlier uses the 13.5 key store, whose keybag that enclave accepts; and the
 # kernel's random-number thread no longer asks the enclave for data while the
 # Mac sleeps, which left Touch ID failing after resume on an M2 Pro.
+# 11.33 adds --reset-touchid, which starts Touch ID over on a Mac whose
+# keybag no longer loads (such an M2 Pro/Max after a macOS update): it moves
+# the Touch ID state aside for a new keybag at the next boot. Enrolment
+# failures are now logged with their cause, and aurora-touchid-setup verifies
+# as root, so it also completes over SSH.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -89,8 +94,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.32
-TAG=sep-7.1.12.aurora2-11.32
+VERSION=7.1.12.aurora2-11.33
+TAG=sep-7.1.12.aurora2-11.33
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -98,10 +103,10 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst d96dde00dcee4249417eab44aadef68adc9bdbf899b83dd47813c9d7862dda29"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst e9f4e9e22b57b6c10a7db232179e2f0e85962ae0bde9d2629f753baecff445cd"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 57969eb176558969a9162751d66b023921f0c4bc3a06ca8e17e19654a71838fd"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst 639d1ff305995f8e4acee24b778a8afa7cf5c52855beb55929d52bb137775b81"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
-  "aurora-touchid-20261002-1-any.pkg.tar.zst a9dda6e0526874e4ac760629f3aa5bd37421379a1d8af34000f3dc7b73a21b17"
+  "aurora-touchid-20261003-1-any.pkg.tar.zst 29b0360fac8c257d754e64bd1b9c33c487eb2595dd3c31e9138d7a476afa3d64"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
 )
 PINNED="linux-aurora linux-aurora-headers libfprint m1n1-aurora"
@@ -897,7 +902,9 @@ SAFETY, NON-NEGOTIABLE
    there is the report we need.
    Updating macOS from 26.2 or earlier to a later release after enrolling
    loses the enrolments: Touch ID then needs a new keybag. Say so if that
-   is what happened.
+   is what happened. With the owner's agreement, start Touch ID over:
+     curl -fsSL https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh | bash -s -- --reset-touchid
+   then reboot and enrol again.
    The sensor itself: "sudo dmesg | grep apple-mesa" should say the power line
    came "from the device node". Quote it if it says anything else.
 
@@ -980,7 +987,7 @@ SAFETY, NON-NEGOTIABLE
              sudo dmesg | grep -E 'cold init done|link up after|translation fault|HC died'
            Any "translation fault" or "HC died" line is a failure to report.
            For a full report, after plugging the dock in:
-             curl -fsSLO https://raw.githubusercontent.com/iconidentify/aurora-linux/refs/tags/sep-7.1.12.aurora2-11.32/tools/aurora-tb/tb-pcie-report
+             curl -fsSLO https://raw.githubusercontent.com/iconidentify/aurora-linux/refs/tags/sep-7.1.12.aurora2-11.33/tools/aurora-tb/tb-pcie-report
              sudo sh tb-pcie-report --no-wait
 
    6c. Across suspend:
