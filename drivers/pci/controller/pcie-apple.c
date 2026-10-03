@@ -2399,7 +2399,6 @@ static int apple_pcie_neo_enumerate(struct pci_host_bridge *bridge)
 		dev_err(pcie->dev, "root memory forwarding unavailable after assignment: %d\n", ret);
 		goto close_config;
 	}
-	pci_bus_add_devices(root->subordinate);
 	for (function = 0; function < 2; function++) {
 		endpoint = pci_get_slot(root->subordinate, PCI_DEVFN(0, function));
 		if (!endpoint) {
@@ -2408,28 +2407,48 @@ static int apple_pcie_neo_enumerate(struct pci_host_bridge *bridge)
 		}
 		if (pci_read_config_word(endpoint, PCI_COMMAND, &command)) {
 			ret = -EIO;
+		} else if (endpoint->vendor != PCI_VENDOR_ID_MEDIATEK ||
+			   endpoint->device != (function ? 0x793b : 0x7932)) {
+			ret = -ENODEV;
 		} else {
 			dev_info(pcie->dev, "enumerated %s id=%04x:%04x command=%#x driver=%s\n",
 				 pci_name(endpoint), endpoint->vendor, endpoint->device, command,
 				 endpoint->driver ? endpoint->driver->name : "unbound");
 			if (command & PCI_COMMAND_MASTER) {
-				/* This experiment never permits endpoint bus mastering. */
+				/* Admission requires cold, unbound endpoints. */
 				pci_clear_master(endpoint);
 				ret = -EIO;
 			}
 			if (endpoint->driver)
 				ret = -EBUSY;
+			if (!ret) {
+				/*
+				 * The radios require the equivalent of ASPM performance
+				 * policy before their drivers start. Keep this restriction
+				 * on their shared link, including L1 substates and Clock
+				 * PM, without changing policy on other PCIe links. The
+				 * PCI core tracks the restriction across policy changes.
+				 */
+				ret = pci_disable_link_state(endpoint,
+							     PCIE_LINK_STATE_ALL);
+				if (ret)
+					pci_err(endpoint,
+						"cannot disable radio link power states: %d\n",
+						ret);
+			}
 		}
 		pci_dev_put(endpoint);
 		if (ret)
 			break;
 	}
+	if (!ret)
+		pci_bus_add_devices(root->subordinate);
 close_config:
 	if (ret)
 		WRITE_ONCE(pcie->neo_config_ready, false);
 	pci_unlock_rescan_remove();
 	if (!ret)
-		dev_info(pcie->dev, "NEO_ENUMERATION_ONLY_READY; functions0/1 unbound, bus mastering off\n");
+		dev_info(pcie->dev, "NEO_RADIO_READY; functions0/1 admitted with link power states disabled\n");
 out:
 	pci_dev_put(root);
 	return ret;
@@ -2467,7 +2486,9 @@ static int apple_pcie_probe(struct platform_device *pdev)
 		}
 	}
 
-	if (hw->root_bus_only && apple_piodma_bootstrap_enabled()) {
+	if (hw->root_bus_only &&
+	    of_device_is_compatible(dev->of_node, "apple,t8140-pcie") &&
+	    apple_piodma_bootstrap_enabled()) {
 		ret = apple_piodma_bootstrap_get(dev, &piodma_supplier);
 		if (ret)
 			return dev_err_probe(dev, ret, "PIODMA supplier unavailable\n");
@@ -2555,6 +2576,11 @@ static int apple_pcie_probe(struct platform_device *pdev)
 
 	if (pcie->piodma_supplier) {
 		/* All fallible devres setup precedes publication of DMA pointers. */
+		/* Retained bootstrap ownership forbids host module teardown. */
+		if (!try_module_get(THIS_MODULE)) {
+			pci_host_common_remove(pdev);
+			return -ENODEV;
+		}
 		ret = apple_pcie_neo_enumerate(bridge);
 		if (ret)
 			dev_err(dev, "enumeration experiment failed=%d; host/supplier retained, no retry\n",

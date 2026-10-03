@@ -59,14 +59,17 @@ config PCIE_APPLE
 
 config PCIE_APPLE_PIODMA_DIAG
 	bool "J700 PIODMA diagnostic (requires full reset after use)"
-	depends on PCIE_APPLE=y && ARCH_APPLE && IOMMU_DMA
-	depends on !PM_SLEEP && !KEXEC_CORE
+	depends on PCIE_APPLE != n && ARCH_APPLE && IOMMU_DMA
+	depends on PCIEASPM
 	help
 	  Build the experimental SID17 retained bootstrap provider. It submits
 	  one fixed request, validates typed ECAM and permits enumeration of
-	  the two Neo functions only with the explicit enumerate=1 parameter.
-	  Its arena remains owned until a full reset. This is not production
-	  support, and does not qualify memory reuse or radio operation.
+	  the two Neo functions by default on J700/T8140 only. The parameter
+	  pcie_apple_piodma_diag.enumerate=0 disables the bootstrap.
+	  Its arena remains owned until a full reset. While that memory is
+	  retained, suspend, hibernate and kexec are refused at runtime on
+	  the Neo; other machines retain their normal lifecycle support.
+	  The provider is built-in even when the Apple PCIe host is a module.
 
 config PCI_VERSATILE
 	bool "ARM Versatile PB PCI controller"

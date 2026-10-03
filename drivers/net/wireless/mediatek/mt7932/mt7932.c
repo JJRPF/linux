@@ -1172,11 +1172,17 @@ static void mt_remove(struct pci_dev *pdev)
 
 static int mt_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
+	struct pci_host_bridge *bridge = pci_find_host_bridge(pdev->bus);
 	struct mt7932 *m;
 	struct iommu_domain *domain;
 	int ret;
 
-	if (!of_machine_is_compatible("apple,j700") || pdev->devfn != 0)
+	if (!of_machine_is_compatible("apple,j700") ||
+	    !of_machine_is_compatible("apple,t8140") || pdev->devfn != 0 ||
+	    !of_device_is_compatible(pdev->dev.of_node, "pci14c3,7932") ||
+	    !bridge->dev.parent ||
+	    !of_device_is_compatible(bridge->dev.parent->of_node,
+				     "apple,t8140-pcie"))
 		return -ENODEV;
 	domain = iommu_get_domain_for_dev(&pdev->dev);
 	if (!domain || (domain->type != IOMMU_DOMAIN_DMA && domain->type != IOMMU_DOMAIN_DMA_FQ))

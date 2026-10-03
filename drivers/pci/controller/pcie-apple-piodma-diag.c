@@ -8,7 +8,8 @@
  *
  * This built-in driver deliberately retains its coherent arena and device
  * power reference until a coordinator-controlled full hardware reset. There
- * is no unbind interface, suspend, kexec or retry. Native ECAM is only
+ * is no unbind interface or retry. Runtime guards refuse suspend and kexec
+ * while the arena is held. Native ECAM is only
  * opened by the host after a successful bootstrap and typed read checks.
  */
 #include <linux/bitfield.h>
@@ -19,16 +20,21 @@
 #include <linux/iopoll.h>
 #include <linux/dma-mapping.h>
 #include <linux/iommu.h>
+#include <linux/kexec.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/overflow.h>
 #include <linux/pci.h>
+#include <linux/pci-apple-piodma.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/sched.h>
 #include <linux/sizes.h>
 #include <linux/slab.h>
+#include <linux/suspend.h>
 
 #include "pcie-apple-piodma-diag.h"
 
@@ -48,7 +54,7 @@
 #define PIODMA_FIFO_MASK		GENMASK(5, 0)
 #define PIODMA_IRQ_LIMIT		16
 
-static bool enumerate;
+static bool enumerate = true;
 module_param(enumerate, bool, 0400);
 MODULE_PARM_DESC(enumerate, "Prime once, validate native ECAM, and enumerate the two Neo functions");
 
@@ -92,7 +98,50 @@ struct apple_piodma_diag {
 	u64 pointer_prefix;
 	u8 secondary_bus;
 	bool retained;
+	struct notifier_block pm_notifier;
 };
+
+/* A successful supplier probe owns its arena and guards until full reset. */
+static struct apple_piodma_diag *active_diag;
+
+static bool apple_piodma_trylock_sleep(unsigned int *flags)
+{
+	*flags = 0;
+	if (!IS_ENABLED(CONFIG_PM_SLEEP))
+		return true;
+
+	/*
+	 * Probe holds device_lock(), while system sleep holds the transition
+	 * mutex before waiting for probes and taking device locks. Never wait
+	 * for that mutex here: if sleep won, defer without publishing any DMA.
+	 * If probe won, publish the veto before releasing the transition mutex.
+	 */
+	*flags = current->flags;
+	current->flags |= PF_NOFREEZE;
+	if (mutex_trylock(&system_transition_mutex))
+		return true;
+	if (!(*flags & PF_NOFREEZE))
+		current->flags &= ~PF_NOFREEZE;
+	return false;
+}
+
+static int apple_piodma_pm_notify(struct notifier_block *nb,
+				  unsigned long action, void *unused)
+{
+	struct apple_piodma_diag *diag =
+		container_of(nb, struct apple_piodma_diag, pm_notifier);
+
+	switch (action) {
+	case PM_SUSPEND_PREPARE:
+	case PM_HIBERNATION_PREPARE:
+	case PM_RESTORE_PREPARE:
+		dev_warn(diag->dev,
+			 "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
+		return notifier_from_errno(-EBUSY);
+	default:
+		return NOTIFY_DONE;
+	}
+}
 
 static int apple_piodma_diag_root(struct apple_piodma_diag *diag, struct pci_dev *root)
 {
@@ -311,8 +360,8 @@ static int apple_piodma_diag_initialize(struct apple_piodma_diag *diag)
 	int i;
 	u32 value;
 
-	/* All later failures retain the device, IRQ, domain and arena. */
-	diag->retained = true;
+	/* Publish validated root/bus fields; all later failures retain ownership. */
+	smp_store_release(&diag->retained, true);
 	writel(PIODMA_IRQ_MASK, diag->engine + 8);
 	writel(0, diag->fabric + 4);
 	for (i = 0; i < ARRAY_SIZE(tunables); i++) {
@@ -465,8 +514,10 @@ static int apple_piodma_diag_submit(struct apple_piodma_diag *diag, unsigned int
 
 bool apple_piodma_bootstrap_enabled(void)
 {
-	return enumerate;
+	return enumerate && of_machine_is_compatible("apple,j700") &&
+		of_machine_is_compatible("apple,t8140");
 }
+EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_enabled);
 
 static void apple_piodma_put_supplier(void *data)
 {
@@ -481,7 +532,8 @@ int apple_piodma_bootstrap_get(struct device *host, struct device **supplier)
 	bool correct_host;
 	int ret;
 
-	if (!enumerate)
+	if (!apple_piodma_bootstrap_enabled() ||
+	    !of_device_is_compatible(host->of_node, "apple,t8140-pcie"))
 		return -ENODEV;
 	node = of_parse_phandle(host->of_node, "apple,piodma", 0);
 	if (!node)
@@ -514,6 +566,7 @@ int apple_piodma_bootstrap_get(struct device *host, struct device **supplier)
 	*supplier = &pdev->dev;
 	return 0;
 }
+EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_get);
 
 int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 {
@@ -539,15 +592,42 @@ int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 			 diag->slots[0].result);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_prime);
+
+int apple_piodma_radio_check(struct pci_dev *pdev)
+{
+	/* Acquire the supplier's permanent arena and PM/kexec guard ownership. */
+	struct apple_piodma_diag *diag = smp_load_acquire(&active_diag);
+	struct pci_host_bridge *bridge = pci_find_host_bridge(pdev->bus);
+	struct device_node *host;
+	bool matches;
+
+	if (!apple_piodma_bootstrap_enabled() || !diag)
+		return -ENODEV;
+	/* Pair with initialization's publication of the validated root/bus. */
+	if (!smp_load_acquire(&diag->retained) || !bridge->dev.parent ||
+	    pdev->vendor != PCI_VENDOR_ID_MEDIATEK ||
+	    pci_domain_nr(pdev->bus) || pdev->bus->number != diag->secondary_bus ||
+	    PCI_SLOT(pdev->devfn) ||
+	    (pdev->devfn != PCI_DEVFN(0, 0) && pdev->devfn != PCI_DEVFN(0, 1)) ||
+	    pdev->device != (PCI_FUNC(pdev->devfn) ? 0x793b : 0x7932))
+		return -ENODEV;
+
+	host = of_parse_phandle(diag->dev->of_node, "apple,pcie-host", 0);
+	matches = host && host == bridge->dev.parent->of_node;
+	of_node_put(host);
+	return matches ? 0 : -ENODEV;
+}
+EXPORT_SYMBOL_GPL(apple_piodma_radio_check);
 
 static int apple_piodma_diag_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct apple_piodma_diag *diag;
+	unsigned int sleep_flags;
 	int i, ret;
 
-	if (!enumerate || !of_machine_is_compatible("apple,j700") ||
-	    !of_machine_is_compatible("apple,t8140") || PAGE_SIZE != SZ_16K)
+	if (!apple_piodma_bootstrap_enabled() || PAGE_SIZE != SZ_16K)
 		return -ENODEV;
 	diag = kzalloc_obj(*diag);
 	if (!diag)
@@ -560,6 +640,21 @@ static int apple_piodma_diag_probe(struct platform_device *pdev)
 	ret = apple_piodma_diag_iommu(diag);
 	if (ret)
 		goto err_free;
+	/* Publish guards and arena atomically with respect to system sleep. */
+	if (!apple_piodma_trylock_sleep(&sleep_flags)) {
+		ret = -EPROBE_DEFER;
+		goto err_free;
+	}
+	diag->pm_notifier.notifier_call = apple_piodma_pm_notify;
+	ret = register_pm_notifier(&diag->pm_notifier);
+	if (ret)
+		goto err_sleep;
+	ret = kexec_block();
+	if (ret) {
+		if (ret == -EBUSY)
+			ret = -EPROBE_DEFER;
+		goto err_notifier;
+	}
 	pm_runtime_enable(dev);
 	ret = pm_runtime_resume_and_get(dev);
 	if (ret < 0)
@@ -574,19 +669,31 @@ static int apple_piodma_diag_probe(struct platform_device *pdev)
 			       dev_name(dev), diag);
 	if (ret)
 		goto err_arena;
+	/* The notifier and retained state also keep their device alive. */
+	get_device(dev);
 	platform_set_drvdata(pdev, diag);
+	/* Publish the arena, device reference and both guards together. */
+	smp_store_release(&active_diag, diag);
+	unlock_system_sleep(sleep_flags);
 	dev_info(dev, "bootstrap supplier ready; no command submitted during probe\n");
 	return 0;
 
 err_arena:
 	/* No path after initialization may release ownership. */
-	if (WARN_ON_ONCE(diag->retained))
+	if (WARN_ON_ONCE(diag->retained)) {
+		unlock_system_sleep(sleep_flags);
 		return 0;
+	}
 	if (diag->arena)
 		dma_free_coherent(dev, PIODMA_ARENA_SIZE, diag->arena, diag->dma);
 	pm_runtime_put_sync(dev);
 err_pm:
 	pm_runtime_disable(dev);
+	kexec_unblock();
+err_notifier:
+	unregister_pm_notifier(&diag->pm_notifier);
+err_sleep:
+	unlock_system_sleep(sleep_flags);
 err_free:
 	kfree(diag);
 	return dev_err_probe(dev, ret, "PIODMA diagnostic preflight failed\n");
