@@ -103,8 +103,9 @@ static int do_kexec_load(unsigned long entry, unsigned long nr_segments,
 	if (!kexec_trylock())
 		return -EBUSY;
 	if (nr_segments && kexec_blocked()) {
-		pr_warn("kexec load refused: a device retains memory until hardware reset\n");
-		ret = -EBUSY;
+		pr_warn("kexec load refused permanently; first interlock: %s\n",
+			kexec_block_reason());
+		ret = -EOPNOTSUPP;
 		goto out_unlock;
 	}
 

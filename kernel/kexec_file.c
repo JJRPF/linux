@@ -383,9 +383,10 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 	if (!kexec_trylock())
 		return -EBUSY;
 	if (!(flags & KEXEC_FILE_UNLOAD) && kexec_blocked()) {
-		pr_warn("kexec file load refused: a device retains memory until hardware reset\n");
+		pr_warn("kexec file load refused permanently; first interlock: %s\n",
+			kexec_block_reason());
 		kexec_unlock();
-		return -EBUSY;
+		return -EOPNOTSUPP;
 	}
 
 #ifdef CONFIG_CRASH_DUMP

@@ -100,6 +100,7 @@ struct apple_piodma_diag {
 	bool retained;
 	bool radio_admitted;
 	struct notifier_block pm_notifier;
+	struct kexec_blocker kexec_blocker;
 };
 
 /* A successful supplier probe owns its unpublished arena until full reset. */
@@ -126,7 +127,8 @@ static bool apple_piodma_trylock_sleep(unsigned int *flags)
 	return false;
 }
 
-static int apple_piodma_lock_transition(unsigned int *sleep_flags)
+static int apple_piodma_lock_transition(struct apple_piodma_diag *diag,
+					unsigned int *sleep_flags)
 {
 	unsigned int attempt;
 	int ret;
@@ -134,7 +136,7 @@ static int apple_piodma_lock_transition(unsigned int *sleep_flags)
 	/* Probe cannot wait on either lock while holding its device lock. */
 	for (attempt = 0; attempt < 50; attempt++) {
 		if (apple_piodma_trylock_sleep(sleep_flags)) {
-			ret = kexec_block();
+			ret = kexec_block(&diag->kexec_blocker);
 			if (!ret)
 				return 0;
 			unlock_system_sleep(*sleep_flags);
@@ -160,7 +162,7 @@ static int apple_piodma_pm_notify(struct notifier_block *nb,
 	case PM_RESTORE_PREPARE:
 		dev_warn(diag->dev,
 			 "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
-		return notifier_from_errno(-EBUSY);
+		return notifier_from_errno(-EOPNOTSUPP);
 	default:
 		return NOTIFY_DONE;
 	}
@@ -180,7 +182,7 @@ static int apple_piodma_pm_prepare(struct device *dev)
 	 */
 	dev_warn(dev,
 		 "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
-	return -EBUSY;
+	return -EOPNOTSUPP;
 }
 
 static const struct dev_pm_ops apple_piodma_pm_ops = {
@@ -619,7 +621,7 @@ int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 	int ret;
 
 	/* Contention must not consume the one permitted hardware attempt. */
-	ret = apple_piodma_lock_transition(&sleep_flags);
+	ret = apple_piodma_lock_transition(diag, &sleep_flags);
 	if (ret)
 		return ret;
 	/* One hardware attempt, including permanent preflight failures. */
@@ -653,7 +655,7 @@ int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 	return ret;
 
 err_kexec:
-	kexec_unblock();
+	kexec_unblock(&diag->kexec_blocker);
 	unlock_system_sleep(sleep_flags);
 	return ret;
 }
@@ -717,6 +719,8 @@ static int apple_piodma_diag_probe(struct platform_device *pdev)
 	if (!diag)
 		return -ENOMEM;
 	diag->dev = dev;
+	diag->kexec_blocker.reason =
+		"Neo radio bootstrap retains DMA memory until full hardware reset";
 	for (i = 0; i < PIODMA_REQUEST_COUNT; i++)
 		init_completion(&diag->slots[i].event);
 	atomic_set(&diag->irq_count, 0);

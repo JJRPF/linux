@@ -22,6 +22,7 @@ int kimage_is_destination_range(struct kimage *image,
  */
 extern atomic_t __kexec_lock;
 bool kexec_blocked(void);
+const char *kexec_block_reason(void);
 static inline bool kexec_trylock(void)
 {
 	int old = 0;

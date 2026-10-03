@@ -136,7 +136,8 @@ void __noclone __crash_kexec(struct pt_regs *regs)
 	 */
 	if (kexec_trylock()) {
 		if (kexec_crash_image && kexec_blocked()) {
-			pr_emerg("crash kexec refused: a device retains memory until hardware reset\n");
+			pr_emerg("crash kexec refused permanently; first interlock: %s\n",
+				 kexec_block_reason());
 		} else if (kexec_crash_image) {
 			struct pt_regs fixed_regs;
 

@@ -7,6 +7,7 @@
 
 struct kexec_block_test_state {
 	unsigned int acquisitions;
+	struct kexec_blocker blocker;
 };
 
 static void kexec_block_test_cleanup(void *data)
@@ -14,7 +15,7 @@ static void kexec_block_test_cleanup(void *data)
 	struct kexec_block_test_state *state = data;
 
 	while (state->acquisitions) {
-		kexec_unblock();
+		kexec_unblock(&state->blocker);
 		state->acquisitions--;
 	}
 }
@@ -34,6 +35,7 @@ static int kexec_block_test_init(struct kunit *test)
 	state = kunit_kzalloc(test, sizeof(*state), GFP_KERNEL);
 	if (!state)
 		return -ENOMEM;
+	state->blocker.reason = "KUnit retained-memory guard";
 	test->priv = state;
 	return kunit_add_action_or_reset(test, kexec_block_test_cleanup, state);
 }
@@ -41,7 +43,7 @@ static int kexec_block_test_init(struct kunit *test)
 static void kexec_test_acquire(struct kunit *test)
 {
 	struct kexec_block_test_state *state = test->priv;
-	int ret = kexec_block();
+	int ret = kexec_block(&state->blocker);
 
 	KUNIT_ASSERT_EQ(test, ret, 0);
 	state->acquisitions++;
@@ -52,7 +54,7 @@ static void kexec_test_release(struct kunit *test)
 	struct kexec_block_test_state *state = test->priv;
 
 	KUNIT_ASSERT_GT(test, state->acquisitions, 0);
-	kexec_unblock();
+	kexec_unblock(&state->blocker);
 	state->acquisitions--;
 }
 
@@ -86,11 +88,12 @@ static void kexec_block_nested_test(struct kunit *test)
 
 static void kexec_block_busy_test(struct kunit *test)
 {
+	struct kexec_block_test_state *state = test->priv;
 	int ret;
 
 	kexec_test_acquire(test);
 	KUNIT_ASSERT_TRUE(test, kexec_trylock());
-	ret = kexec_block();
+	ret = kexec_block(&state->blocker);
 	kexec_unlock();
 	KUNIT_EXPECT_EQ(test, ret, -EBUSY);
 	/* A failed acquisition must not leave an extra reference behind. */
@@ -113,7 +116,7 @@ static void kexec_block_execution_test(struct kunit *test)
 	 */
 	if (image_loaded)
 		kunit_skip(test, "a normal kexec image is already loaded");
-	KUNIT_EXPECT_EQ(test, kernel_kexec(), -EBUSY);
+	KUNIT_EXPECT_EQ(test, kernel_kexec(), -EOPNOTSUPP);
 	kexec_test_release(test);
 }
 
