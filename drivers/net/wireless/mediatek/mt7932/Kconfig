@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
 config MT7932_FULLMAC
 	tristate "Experimental J700 MT7932 fullmac wireless support"
-	depends on PCI && OF && ARM64 && IOMMU_DMA
+	depends on PCI && OF && ARM64 && ARCH_APPLE && IOMMU_DMA
+	depends on PCIE_APPLE_PIODMA_DIAG && CFG80211
 	select FW_LOADER
-	select CFG80211
 	help
 	  Native support for the built-in J700 Wi-Fi endpoint: managed
 	  WPA2-CCMP station operation on 2.4 GHz at 20 MHz and channels 36..48
-	  with a software bandwidth limit of 80 MHz.
+	  at 20/40/80 MHz, with a software bandwidth limit of 80 MHz.
 	  Requires original firmware, own calibration and original-derived
 	  country policy packages in addition to the cfg80211 regulatory database.
 	  Requires a trained retained PCI link and a translated SID1 DMA domain.
