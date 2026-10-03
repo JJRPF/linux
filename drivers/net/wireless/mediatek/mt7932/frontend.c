@@ -47,6 +47,8 @@ static void mt_scan_finish_work(struct work_struct *work)
 	}
 	cancel_delayed_work(&m->scan_timeout_work);
 	spin_lock_irqsave(&m->response_lock, flags);
+	/* A terminal failure may have followed the worker's earlier snapshot. */
+	info.aborted |= m->scan_aborted || !mt_rf_allowed(m);
 	cancel[0] = m->scan_seq;
 	if (request && info.aborted && !m->scan_finished)
 		m->retired_scan_seq = m->scan_seq;
@@ -387,17 +389,28 @@ static int mt_set_bss(struct mt7932 *m, bool active)
 static int mt_net_open(struct net_device *netdev)
 {
 	struct mt7932 *m = *(struct mt7932 **)netdev_priv(netdev);
+	unsigned long flags;
 	int ret = 0;
 
 	mutex_lock(&m->command_mutex);
-	if (READ_ONCE(m->stopping)) {
+	spin_lock_irqsave(&m->response_lock, flags);
+	if (m->stopping)
+		ret = -ESHUTDOWN;
+	else if (m->link_failed || m->cal_state.error)
+		ret = m->cal_state.error ?: -EIO;
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	if (ret) {
 		mutex_unlock(&m->command_mutex);
-		return -ESHUTDOWN;
+		return ret;
 	}
 	if (READ_ONCE(m->rf_ready))
 		ret = mt_set_bss(m, true);
+	spin_lock_irqsave(&m->response_lock, flags);
+	if (!ret && (m->stopping || m->link_failed || m->cal_state.error))
+		ret = m->cal_state.error ?: (m->stopping ? -ESHUTDOWN : -EIO);
 	if (!ret)
 		WRITE_ONCE(m->interface_up, true);
+	spin_unlock_irqrestore(&m->response_lock, flags);
 	mutex_unlock(&m->command_mutex);
 	netif_carrier_off(netdev);
 	netif_stop_queue(netdev);
@@ -555,8 +568,20 @@ int mt_register_interface(struct mt7932 *m)
 int mt_enable_scan(struct mt7932 *m)
 {
 	unsigned long flags;
-	int ret = mt_data_prepare(m);
+	int ret;
 
+	spin_lock_irqsave(&m->response_lock, flags);
+	ret = m->cal_state.error ?: ((m->stopping || m->link_failed) ? -EIO : 0);
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	if (ret)
+		return ret;
+	ret = mt_data_prepare(m);
+
+	if (ret)
+		return ret;
+	spin_lock_irqsave(&m->response_lock, flags);
+	ret = m->cal_state.error ?: ((m->stopping || m->link_failed) ? -EIO : 0);
+	spin_unlock_irqrestore(&m->response_lock, flags);
 	if (ret)
 		return ret;
 	if (READ_ONCE(m->interface_up)) {

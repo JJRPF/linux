@@ -232,6 +232,7 @@ static void mt_startup_work(struct work_struct *work)
 	unsigned long flags;
 	u32 generation;
 	char path[64];
+	bool submitted;
 	int ret;
 
 	for (;;) {
@@ -263,6 +264,7 @@ static void mt_startup_work(struct work_struct *work)
 		if (READ_ONCE(m->retired_scan_seq))
 			ret = -EBUSY;
 		file = NULL;
+		submitted = false;
 		if (READ_ONCE(m->policy_failed) || READ_ONCE(m->link_failed) ||
 		    (m->startup_started && !READ_ONCE(m->rf_ready)))
 			ret = -EIO;
@@ -284,19 +286,21 @@ static void mt_startup_work(struct work_struct *work)
 		if (READ_ONCE(m->stopping) || generation != READ_ONCE(m->reg_generation))
 			goto next;
 		if (!ret) {
+			submitted = true;
 			ret = mt_publish_policy(m, &reg, &policy);
 			if (!ret && !m->startup_started)
 				ret = mt_startup_once(m);
 			/* A partial SET sequence is not a rollback. Only missing or
 			 * invalid files BEFORE submission are recoverable by a hint.
 			 */
-			if (ret)
-				WRITE_ONCE(m->policy_failed, true);
 		}
 		spin_lock_irqsave(&m->response_lock, flags);
+		if (!ret && (m->stopping || m->link_failed || m->cal_state.error))
+			ret = m->cal_state.error ?: -EIO;
+		if (ret && submitted)
+			WRITE_ONCE(m->policy_failed, true);
 		if (!ret && generation == m->reg_generation)
 			WRITE_ONCE(m->reg_pending, false);
-		spin_unlock_irqrestore(&m->response_lock, flags);
 		if (ret)
 			dev_warn(&m->pdev->dev, "REGULATORY_BLOCKED: %c%c generation=%u error=%d recovery-required=%u\n",
 				 reg.alpha2[0], reg.alpha2[1], generation, ret,
@@ -305,6 +309,7 @@ static void mt_startup_work(struct work_struct *work)
 			dev_info(&m->pdev->dev, "REGULATORY_READY: %c%c firmware=%c%c generation=%u current=%u\n",
 				 reg.alpha2[0], reg.alpha2[1], reg.domain[0], reg.domain[1],
 				 generation, !m->reg_pending);
+		spin_unlock_irqrestore(&m->response_lock, flags);
 next:
 		mutex_unlock(&m->command_mutex);
 		if (file)
