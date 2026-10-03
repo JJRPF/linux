@@ -101,7 +101,7 @@ struct mt7932 {
 	struct ieee80211_rate rates[12];
 	struct work_struct startup_work;
 	struct mutex command_mutex;
-	bool startup_started, rf_ready, reg_pending, policy_failed;
+	bool startup_started, rf_ready, reg_pending, policy_failed, reg_retryable;
 	bool interface_registered, interface_up;
 	u32 reg_generation, reg_attempted;
 	struct mt7932_reg_snapshot reg_desired;
@@ -166,6 +166,7 @@ struct mt7932 {
 };
 
 bool mt_rf_allowed(struct mt7932 *m);
+void mt_retry_missing_policy(struct mt7932 *m);
 int mt_request_input(struct mt7932 *m, const struct firmware **fw, const char *name);
 /* response_lock held; closes RF admission and reports terminal host state. */
 void mt_rf_fail_locked(struct mt7932 *m, int error);

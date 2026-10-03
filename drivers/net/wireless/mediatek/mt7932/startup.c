@@ -223,6 +223,24 @@ static int mt_startup_once(struct mt7932 *m)
 	return ret;
 }
 
+/* Retry only a completed file lookup that failed before any policy SET.
+ * Consume the flag under the same lock as the worker publication, so repeated
+ * userspace requests cannot continually invalidate an in-flight attempt.
+ */
+void mt_retry_missing_policy(struct mt7932 *m)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&m->response_lock, flags);
+	if (m->reg_retryable && m->reg_pending && m->interface_registered &&
+	    !m->stopping && !m->policy_failed && !m->link_failed && !m->cal_state.error) {
+		m->reg_retryable = false;
+		m->reg_generation++;
+		schedule_work(&m->startup_work);
+	}
+	spin_unlock_irqrestore(&m->response_lock, flags);
+}
+
 static void mt_startup_work(struct work_struct *work)
 {
 	struct mt7932 *m = container_of(work, struct mt7932, startup_work);
@@ -244,6 +262,7 @@ static void mt_startup_work(struct work_struct *work)
 			return;
 		}
 		m->reg_attempted = generation;
+		m->reg_retryable = false;
 		spin_unlock_irqrestore(&m->response_lock, flags);
 
 		/* No command/wiphy lock while joining lifecycle workers. RX, D7
@@ -299,6 +318,10 @@ static void mt_startup_work(struct work_struct *work)
 			ret = m->cal_state.error ?: -EIO;
 		if (ret && submitted)
 			WRITE_ONCE(m->policy_failed, true);
+		if (generation == m->reg_generation)
+			m->reg_retryable = ret == -ENOENT && !submitted &&
+				!m->stopping && !m->policy_failed && !m->link_failed &&
+				!m->cal_state.error;
 		if (!ret && generation == m->reg_generation)
 			WRITE_ONCE(m->reg_pending, false);
 		if (ret)

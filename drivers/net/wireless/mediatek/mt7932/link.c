@@ -582,6 +582,8 @@ int mt_connect(struct wiphy *wiphy, struct net_device *netdev,
 	bool open = mt_open_request(params);
 	int ret = 0;
 
+	if (netdev == m->netdev)
+		mt_retry_missing_policy(m);
 	if (!mt_rf_allowed(m) || !m->bss_active || netdev != m->netdev)
 		return -EAGAIN;
 	dev_info(&m->pdev->dev, "CONNECT_REQUEST: WPA=%u pairwise-count=%d group=%08x AKM-count=%d PMK-present=%u MFP=%u IE-bytes=%zu\n",

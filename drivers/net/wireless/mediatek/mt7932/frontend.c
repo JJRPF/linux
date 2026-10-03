@@ -30,6 +30,7 @@ static void mt_scan_finish_work(struct work_struct *work)
 
 	/* Retire the old timer before allowing another request to take ownership. */
 	cancel_delayed_work_sync(&m->scan_timeout_work);
+	mt_retry_missing_policy(m);
 	mutex_lock(&m->command_mutex);
 	spin_lock_irqsave(&m->response_lock, flags);
 	request = m->scan_request;
@@ -327,6 +328,7 @@ int mt_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 
 	if (request->wdev != &m->wdev)
 		return -ENODEV;
+	mt_retry_missing_policy(m);
 	dev_info(&m->pdev->dev, "SCAN_REQUEST: channels=%u ssids=%d ies=%zu flags=%08x duration=%u/%u\n",
 		 request->n_channels, request->n_ssids, request->ie_len, request->flags,
 		 request->duration, request->duration_mandatory);
