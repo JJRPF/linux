@@ -54,6 +54,12 @@
 # The Neural Engine now powers off when idle (aurora-silicon/linux#155, Joshua
 # Warren), and is switched on for the M1, M1 Pro and M2 Pro as well as the M1
 # Max and M2 Max.
+# 11.32 carries three Touch ID fixes from Justin Pfister's review
+# (aurora-silicon/linux#69): a deleted fingerprint is saved as deleted and no
+# longer returns after a reboot; an M2 Pro/Max on system firmware 26.2 or
+# earlier uses the 13.5 key store, whose keybag that enclave accepts; and the
+# kernel's random-number thread no longer asks the enclave for data while the
+# Mac sleeps, which left Touch ID failing after resume on an M2 Pro.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -82,8 +88,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.31
-TAG=sep-7.1.12.aurora2-11.31
+VERSION=7.1.12.aurora2-11.32
+TAG=sep-7.1.12.aurora2-11.32
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -91,8 +97,8 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 7e7e04db48e502325f9f287ffc01543140beb64feb63719f69f937851d7cd345"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst a04ae0735998f409976fb0dd815f2de53eee2740c7326aef2f6ea403f3077494"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst d96dde00dcee4249417eab44aadef68adc9bdbf899b83dd47813c9d7862dda29"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst e9f4e9e22b57b6c10a7db232179e2f0e85962ae0bde9d2629f753baecff445cd"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
   "aurora-touchid-20261002-1-any.pkg.tar.zst a9dda6e0526874e4ac760629f3aa5bd37421379a1d8af34000f3dc7b73a21b17"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
@@ -866,7 +872,7 @@ SAFETY, NON-NEGOTIABLE
              sudo dmesg | grep -E 'cold init done|link up after|translation fault|HC died'
            Any "translation fault" or "HC died" line is a failure to report.
            For a full report, after plugging the dock in:
-             curl -fsSLO https://raw.githubusercontent.com/iconidentify/aurora-linux/refs/tags/sep-7.1.12.aurora2-11.31/tools/aurora-tb/tb-pcie-report
+             curl -fsSLO https://raw.githubusercontent.com/iconidentify/aurora-linux/refs/tags/sep-7.1.12.aurora2-11.32/tools/aurora-tb/tb-pcie-report
              sudo sh tb-pcie-report --no-wait
 
    6c. Across suspend:
