@@ -39,6 +39,9 @@
 # switched on for the M1 Max and M2 Max only, and the read-only SEP diagnostics
 # under /sys/bus/platform/devices/*.sep/diag/. When omarchy-ane-dkms is
 # installed the script says so: its modules take precedence over this kernel's.
+# 11.25.1 (installer only, same packages): rebuilding m1n1's stage 2 now keeps
+# the rest of /etc/default/update-m1n1, so a MacBook Neo keeps its own M1N1=
+# and U_BOOT= instead of being rebuilt from an m1n1 that cannot boot it.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -68,7 +71,7 @@ set -euo pipefail
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
 VERSION=7.1.12.aurora2-11.25
-TAG=sep-7.1.12.aurora2-11.25
+TAG=sep-7.1.12.aurora2-11.25.1
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -315,10 +318,17 @@ EOF
 # version number, kept for the fallback entry) without the Touch ID sensor node.
 # Point it at whatever directory linux-aurora owns, now and after its updates.
 m1n1_update() {
-  local target
-  [[ -f /etc/default/update-m1n1 && ! -f $STATE/update-m1n1.default.saved ]] &&
-    $sudo cp /etc/default/update-m1n1 "$STATE/update-m1n1.default.saved"
-  $sudo tee /etc/default/update-m1n1 >/dev/null <<'EOF'
+  local target conf=/etc/default/update-m1n1 tmp
+  [[ -f $conf && ! -f $STATE/update-m1n1.default.saved ]] &&
+    $sudo cp "$conf" "$STATE/update-m1n1.default.saved"
+  # Replace only the DTBS setting and keep the rest of the file: a MacBook
+  # Neo's M1N1= and U_BOOT= point at its own J700 builds, and dropping them
+  # would rebuild boot.bin from an m1n1 that cannot boot it.
+  tmp=$(mktemp)
+  if [[ -f $conf ]]; then
+    $sudo sed -e '/^# aurora-sep: build m1n1/,/^DTBS=/d' -e '/^DTBS=/d' "$conf" >"$tmp"
+  fi
+  cat >>"$tmp" <<'EOF'
 # aurora-sep: build m1n1's stage 2 from the device trees the installed
 # linux-aurora package owns, which carry the Touch ID sensor node.
 #
@@ -329,6 +339,8 @@ m1n1_update() {
 # (update-m1n1 runs under set -e, so this assignment must always succeed.)
 DTBS=$(pacman -Qlq linux-aurora 2>/dev/null | grep '/dtbs/[^/]*\.dtb$'; true)
 EOF
+  $sudo install -m 644 "$tmp" "$conf"
+  rm -f "$tmp"
   for target in /boot/m1n1/boot.bin /boot/efi/m1n1/boot.bin; do
     [[ -f $target && ! -f $STATE/boot.bin.saved ]] && $sudo cp "$target" "$STATE/boot.bin.saved"
   done
