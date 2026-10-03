@@ -18,3 +18,13 @@ config MT7932_FULLMAC
 	  reset before releasing DMA storage. A failed reset blocks removal,
 	  retaining resources until an explicit retry succeeds or system reset.
 	  Other MediaTek devices and other machines are not matched.
+
+config MT7932_RF_KUNIT_TEST
+	bool "KUnit tests for MT7932 terminal RF failure" if !KUNIT_ALL_TESTS
+	depends on KUNIT=y && MT7932_FULLMAC
+	default KUNIT_ALL_TESTS
+	help
+	  Exercise the driver's terminal calibration failure and startup
+	  admission paths with synthetic devices, without radio hardware.
+	  Check association wakeups, retained peer ownership and refusal to
+	  reopen RF admission after a terminal calibration error.
