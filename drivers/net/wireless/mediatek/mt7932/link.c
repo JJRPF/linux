@@ -231,6 +231,7 @@ static int mt_association_calibration(struct mt7932 *m)
 	const struct firmware *oca;
 	struct mt7932_cal_piece pieces[2];
 	unsigned int input_tag;
+	const char *phase = "OCA2 plan";
 	int ret;
 
 	ret = mt_request_input(m, &oca, "mediatek/mt7932/oca2.bin");
@@ -239,11 +240,13 @@ static int mt_association_calibration(struct mt7932 *m)
 	ret = mt7932_cal_association(oca->data, oca->size, m->connect_center, pieces, &input_tag);
 	if (ret < 0)
 		mt_cal_input_error(m, ret, input_tag, "association plan");
-	if (ret == 2)
+	if (ret == 2) {
+		phase = "D6 command/completion";
 		ret = mt_cal_procedure(m, pieces, 2, 1, 0);
+	}
 	release_firmware(oca);
 	if (ret)
-		dev_err(&m->pdev->dev, "association calibration using mediatek/mt7932/oca2.bin failed: %d\n", ret);
+		dev_err(&m->pdev->dev, "ASSOCIATION_CALIBRATION_FAILED: phase=%s error=%d\n", phase, ret);
 	return ret;
 }
 

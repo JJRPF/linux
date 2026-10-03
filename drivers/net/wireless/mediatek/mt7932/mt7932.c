@@ -751,8 +751,10 @@ static int mt_capability_gate(struct mt7932 *m)
 			dev_info(&m->pdev->dev, "firmware MAC %pM\n", value);
 			mac = true;
 		} else if (type == 8) {
-			if (!value[4] || value[4] > 4)
+			if (!value[4] || value[4] > 4) {
+				dev_err(&m->pdev->dev, "PHY_CAPABILITY_MISMATCH: NSS=%u\n", value[4]);
 				return -EOPNOTSUPP;
+			}
 			memcpy(m->phy_cap, value, 12);
 			m->antenna_mask = (1U << value[4]) - 1;
 			dev_info(&m->pdev->dev, "firmware PHY NSS=%u paths=%02x HT=%u VHT=%u HE=%u\n",
@@ -770,8 +772,10 @@ static int mt_capability_gate(struct mt7932 *m)
 		}
 		offset += 8 + length;
 	}
-	if (!mac || !phy)
+	if (!mac || !phy) {
+		dev_err(&m->pdev->dev, "CAPABILITY_MISSING: MAC=%u PHY=%u\n", mac, phy);
 		return -ENODATA;
+	}
 	print_hex_dump(KERN_INFO, "NIC_CAP: ", DUMP_PREFIX_OFFSET, 16, 1,
 		       m->reply, m->reply_length, false);
 	dev_info(&m->pdev->dev, "MCU_CAPABILITY_OK eid=%02x seq=%u (no calibration or RF yet)\n",
@@ -851,8 +855,11 @@ static int mt_precal_gate(struct mt7932 *m)
 	u32 status;
 	int ret;
 
-	if (!m->runtime_epoch || m->board_type != 3 || !m->runtime_cal_valid)
-		return -EINVAL;
+	if (!m->runtime_epoch || m->board_type != 3 || !m->runtime_cal_valid) {
+		dev_err(&m->pdev->dev, "PRECAL_CAPABILITY_MISMATCH: runtime-epoch=%u board-type=%u runtime-cal-valid=%u\n",
+			m->runtime_epoch, m->board_type, m->runtime_cal_valid);
+		return -EOPNOTSUPP;
+	}
 	/* Stock EfuseBufferModeCal=3, own eFuse board3: original PPR source2.
 	 * This is not the external EEPROM/source0 or own-WCAL/source3 path.
 	 */
@@ -867,10 +874,14 @@ static int mt_precal_gate(struct mt7932 *m)
 	memcpy(request + 4, ppr->data, ppr->size);
 	release_firmware(ppr);
 	ret = mt_request_ext(m, 0xed, 0x21, true, false, true, request, sizeof(request));
-	if (ret)
+	if (ret) {
+		dev_err(&m->pdev->dev, "PPR_SOURCE2_COMMAND_FAILED: %d\n", ret);
 		return ret;
-	if (m->reply_length < 44 || m->reply[28] != 0xed || m->reply[32])
+	}
+	if (m->reply_length < 44 || m->reply[28] != 0xed || m->reply[32]) {
+		dev_err(&m->pdev->dev, "PPR_SOURCE2_REPLY_REJECTED: length=%zu\n", m->reply_length);
 		return -EPROTO;
+	}
 	status = get_unaligned_le32(m->reply + 40);
 	dev_info(&m->pdev->dev, "PPR_SOURCE2_RESULT: status=%08x\n", status);
 	if (status)
@@ -925,6 +936,7 @@ static int mt_firmware_gate(struct mt7932 *m)
 {
 	const struct firmware *patch, *ram;
 	struct mt7932_region region;
+	const char *phase = "file-format";
 	u8 request[8] = {}, value;
 	u32 entry = 0;
 	int ret, patches, regions, i;
@@ -957,6 +969,7 @@ static int mt_firmware_gate(struct mt7932 *m)
 		}
 	dev_info(&m->pdev->dev, "stock containers patch=%zu/%d regions RAM=%zu/%d regions\n",
 		 patch->size, patches, ram->size, regions);
+	phase = "patch semaphore command/reply";
 	put_unaligned_le32(2, request);
 	ret = mt_command(m, 0x10, request, 4);
 	if (ret)
@@ -966,6 +979,7 @@ static int mt_firmware_gate(struct mt7932 *m)
 		goto out;
 	}
 	if (m->reply[32] != 1) {
+		phase = "patch download/start";
 		for (i = 0; i < patches; i++) {
 			mt7932_patch_region(patch->data, patch->size, i, &region);
 			ret = mt_download(m, patch->data, &region, false);
@@ -982,6 +996,7 @@ static int mt_firmware_gate(struct mt7932 *m)
 		mt_secure_release(m);
 	}
 	dev_info(&m->pdev->dev, "PATCH_READY\n");
+	phase = "OTP command/profile";
 	ret = mt_otp_byte(m, 0x7a, &value);
 	if (!ret)
 		ret = mt_otp_byte(m, 0x164, &value);
@@ -990,7 +1005,7 @@ static int mt_firmware_gate(struct mt7932 *m)
 	if (ret)
 		goto out;
 	if (value != 0x15) {
-		dev_err(&m->pdev->dev, "OTP selector mismatch: %02x\n", value);
+		dev_err(&m->pdev->dev, "OTP_PROFILE_MISMATCH: selector=%02x\n", value);
 		ret = -EPROTO;
 		goto out;
 	}
@@ -999,6 +1014,7 @@ static int mt_firmware_gate(struct mt7932 *m)
 		if (ret)
 			goto out;
 	}
+	phase = "RAM download";
 	for (i = 0; i < regions; i++) {
 		mt7932_ram_region(ram->data, ram->size, i, &region);
 		if (region.features & BIT(5))
@@ -1009,6 +1025,7 @@ static int mt_firmware_gate(struct mt7932 *m)
 		if (ret)
 			goto out;
 	}
+	phase = "RAM TX retirement";
 	for (i = 0; i < 1000; i++) {
 		mt_tx_clean(&m->tx[16]);
 		if (!m->tx[16].queued)
@@ -1019,6 +1036,7 @@ static int mt_firmware_gate(struct mt7932 *m)
 		ret = -ETIMEDOUT;
 		goto out;
 	}
+	phase = "firmware start command/readback";
 	usleep_range(20000, 21000);
 	ret = mt_secure_acquire(m);
 	if (ret)
@@ -1033,8 +1051,11 @@ static int mt_firmware_gate(struct mt7932 *m)
 	if (ret)
 		goto out;
 	dev_info(&m->pdev->dev, "FIRMWARE_READY entry=%08x\n", entry);
+	phase = "runtime capability/transport gates";
 	ret = mt_runtime_start(m);
 out:
+	if (ret)
+		dev_err(&m->pdev->dev, "FIRMWARE_GATE_FAILED: phase=%s error=%d\n", phase, ret);
 	release_firmware(ram);
 out_patch:
 	release_firmware(patch);

@@ -22,6 +22,7 @@ static int mt_stock_config(struct mt7932 *m)
 	};
 	struct mt_config_record *records;
 	const struct firmware *file;
+	const char *phase = "file-format";
 	u8 body[284];
 	unsigned int count, i, j, batch;
 	int ret;
@@ -41,6 +42,7 @@ static int mt_stock_config(struct mt7932 *m)
 	 */
 	records = kcalloc(count + ARRAY_SIZE(updates), sizeof(*records), GFP_KERNEL);
 	if (!records) {
+		phase = "host allocation";
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -59,6 +61,8 @@ static int mt_stock_config(struct mt7932 *m)
 	 * the separately specified conditional DbdcMode insertion, not a default.
 	 */
 	if (!m->phy_cap[5]) {
+		phase = "capability profile";
+		dev_err(&m->pdev->dev, "STOCK_CONFIG_CAPABILITY_MISMATCH: DBDC expected=1 observed=0\n");
 		ret = -EOPNOTSUPP;
 		goto free;
 	}
@@ -105,6 +109,7 @@ static int mt_stock_config(struct mt7932 *m)
 		records[j].value[0] = '1';
 		records[j].value_len = 1;
 	}
+	phase = "native SET submission";
 	for (i = 0; i < count; i += batch) {
 		batch = min(4U, count - i);
 		memset(body, 0, sizeof(body));
@@ -120,8 +125,12 @@ static int mt_stock_config(struct mt7932 *m)
 free:
 	kfree(records);
 out:
-	if (ret)
-		dev_err(&m->pdev->dev, "local input mediatek/mt7932/config-original.bin processing failed: %d\n", ret);
+	if (ret) {
+		if (!strcmp(phase, "file-format"))
+			dev_err(&m->pdev->dev, "local input mediatek/mt7932/config-original.bin has invalid format: %d\n", ret);
+		else
+			dev_err(&m->pdev->dev, "STOCK_CONFIG_FAILED: phase=%s error=%d\n", phase, ret);
+	}
 	release_firmware(file);
 	return ret;
 }
