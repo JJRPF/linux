@@ -906,6 +906,9 @@ pub(crate) fn starts_capture(cmd: u32) -> bool {
 
 fn delete(ctx: &mut Context<'_>, user: UserPtr) -> Result<Handled> {
     require_admin()?;
+    if !ctx.session.op.may_start() {
+        return Err(EBUSY);
+    }
     let request: Delete = UserSlice::new(user, core::mem::size_of::<Delete>())
         .reader()
         .read()?;
@@ -935,6 +938,9 @@ fn delete(ctx: &mut Context<'_>, user: UserPtr) -> Result<Handled> {
 
 fn delete_all(ctx: &mut Context<'_>) -> Result<Handled> {
     require_admin()?;
+    if !ctx.session.op.may_start() {
+        return Err(EBUSY);
+    }
 
     if ctx.index.total() == 0 {
         pr_info!("sep_bio: DELETE_ALL on empty index; reporting success (nothing to delete)\n");

@@ -2644,10 +2644,11 @@ impl SepData {
         }
     }
 
-    /// Called by the enrol and verify work items before they touch the sensor.
-    /// Returns false if the system is going to sleep; the session has then
-    /// been ended and the capture must not start. A true return must be
-    /// paired with [`Self::capture_end`].
+    /// Called by the enrol and verify work items before they touch the sensor,
+    /// and by a deletion before it touches the enclave. Returns false if the
+    /// system is going to sleep; the session has then been ended and the
+    /// capture or deletion must not start. A true return must be paired with
+    /// [`Self::capture_end`].
     pub(crate) fn capture_begin(&self) -> bool {
         let mut session = self.bio_session.lock();
         if self.suspending.load(Relaxed) {
@@ -2807,19 +2808,33 @@ impl SepData {
             bio::ioctl(&mut ctx, cmd, arg)?
         };
 
-        // 0x57 sent with the session lock released (it waits on a mailbox reply)
-        if let Some(identity) = handled.delete_identity {
-            self.delete_identity(&identity)?;
-        }
-
-        let mut delete_all_err: Option<Error> = None;
-        for identity in handled.delete_identities.iter() {
-            if let Err(e) = self.delete_identity(identity) {
-                delete_all_err = delete_all_err.or(Some(e));
+        if handled.delete_identity.is_some() || !handled.delete_identities.is_empty() {
+            // A deletion is made durable by saving the Catacombs, and with
+            // xART writes off that save would be refused. Refuse before 0x57
+            // rather than report a deletion that the next boot undoes.
+            if !self.xart_writable() {
+                dev_warn!(
+                    self.dev,
+                    "Touch ID: deleting a fingerprint needs xart_writes=1; with writes off the deletion would not survive a reboot\n"
+                );
+                return Err(EROFS);
             }
-        }
-        if let Some(e) = delete_all_err {
-            return Err(e);
+            // 0x57 and the saves are sent with the session lock released
+            // (they wait on mailbox replies). The system must not sleep
+            // partway through the saves, and a verify that finishes after a
+            // cancel saves too.
+            let deleted = loop {
+                self.wait_until_awake()?;
+                let _writer = self.catacomb_writer.lock();
+                // A suspend began while this waited for the lock: wait it out.
+                if !self.capture_begin() {
+                    continue;
+                }
+                let deleted = self.delete_and_persist(&handled);
+                self.capture_end();
+                break deleted;
+            };
+            deleted?;
         }
 
         if handled.wake {
@@ -3039,10 +3054,77 @@ impl SepData {
         Some(records.lists_uuid(uuid))
     }
 
-    fn delete_identity(&self, identity: &crate::sbio::IdentityV1) -> Result<()> {
+    /// Called with `catacomb_writer` held. A host index entry goes only once
+    /// its deletion is saved: if the save fails, the entry stays, userspace
+    /// still lists the fingerprint, and a retried deletion saves again.
+    fn delete_and_persist(&self, handled: &bio::Handled) -> Result<()> {
+        let retry = self.deletion_unsaved.load(Relaxed);
+        let wanted =
+            Iterator::chain(handled.delete_identity.iter(), handled.delete_identities.iter());
+        // Allocated before any 0x57, so recording a removal cannot fail.
+        let mut gone: KVec<[u8; bio::UUID_LEN]> =
+            KVec::with_capacity(wanted.clone().count(), GFP_KERNEL)?;
+        let mut delete_err: Option<Error> = None;
+        for identity in wanted {
+            match self.delete_identity(identity) {
+                Ok(true) => {
+                    let _ = gone.push_within_capacity(*identity.uuid());
+                }
+                Ok(false) => {}
+                Err(e) => delete_err = delete_err.or(Some(e)),
+            }
+        }
+        // Save what was removed even if another deletion failed.
+        if !gone.is_empty() {
+            match self.persist_deletion(retry) {
+                Ok(()) => {
+                    self.deletion_unsaved.store(false, Relaxed);
+                    for uuid in gone.iter() {
+                        self.forget_identity(uuid, c"removed from the enclave");
+                    }
+                }
+                Err(e) => {
+                    dev_err!(
+                        self.dev,
+                        "bio: removed from the enclave but not saved; the fingerprint stays listed, returns at the next boot, and deleting it again retries the save\n"
+                    );
+                    self.deletion_unsaved.store(true, Relaxed);
+                    delete_err = delete_err.or(Some(e));
+                }
+            }
+        }
+        match delete_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// Returns whether the enclave no longer holds the identity and the host
+    /// entry must wait for [`Self::persist_deletion`].
+    fn delete_identity(&self, identity: &crate::sbio::IdentityV1) -> Result<bool> {
         if self.enclave_lists(identity.uuid()) == Some(false) {
+            // Unless an earlier deletion's save failed, which leaves the
+            // enclave without an identity the saved Catacomb still holds.
+            if self.deletion_unsaved.load(Relaxed) {
+                return Ok(true);
+            }
             self.forget_identity(identity.uuid(), c"a host entry the enclave never had");
-            return Ok(());
+            return Ok(false);
+        }
+
+        // 0x57 cannot be undone. Check first that its deletion can be saved.
+        if crate::catacomb::read(PRIVATE_TYPE_CATACOMB_OWNER).is_none()
+            || !self
+                .enrol_material
+                .lock()
+                .as_ref()
+                .is_some_and(|material| material.snapshot_identity.is_some())
+        {
+            dev_err!(
+                self.dev,
+                "bio: not deleting: there is no owner Catacomb file or identity-bag binding to save the deletion with; nothing was changed\n"
+            );
+            return Err(EIO);
         }
 
         let op = crate::sbio::sbio_delete_identity(identity);
@@ -3055,7 +3137,76 @@ impl SepData {
             return Err(EIO);
         }
 
-        self.forget_identity(identity.uuid(), c"removed from the enclave");
+        Ok(true)
+    }
+
+    /// 0x57 removes an identity from the enclave's memory only. Until the user
+    /// Catacomb is saved, the next attach restores the saved one and the
+    /// deleted fingerprint with it. Saved like a match: only the components
+    /// the enclave marks save-pending (a SAVE_CATACOMB of one that is not has
+    /// been refused), the user before the master because saving the user can
+    /// change the master, state re-read before each, then the lockout and the
+    /// identity bag, which must match the Catacombs. Safe to repeat after a
+    /// failure partway: a `retry` accepts a user Catacomb an earlier attempt
+    /// already saved.
+    fn persist_deletion(&self, retry: bool) -> Result<()> {
+        let Some(user) = crate::sbio::UserId::new(SBIO_PROBE_USER_ID) else {
+            return Err(EIO);
+        };
+        for (who, kind, what) in [
+            (
+                crate::sbio::CatacombUser::enrolling(user),
+                PRIVATE_TYPE_CATACOMB_USER,
+                c"user Catacomb after deletion",
+            ),
+            (
+                crate::sbio::CatacombUser::MASTER,
+                PRIVATE_TYPE_CATACOMB_MASTER,
+                c"master Catacomb after deletion",
+            ),
+        ] {
+            let Some(reply) = self.read_component_states() else {
+                dev_err!(self.dev, "bio: cannot read component state before saving the {}\n", what);
+                return Err(EIO);
+            };
+            let state = crate::sbio::ComponentStates::new(&reply).state_for(who.value());
+            dev_info!(self.dev, "bio: {} state {:?}\n", what, state);
+            let Some(state) = state else {
+                dev_err!(self.dev, "bio: the {} is absent; the deletion cannot be saved\n", what);
+                return Err(EIO);
+            };
+            if state & crate::sbio::COMPONENT_STATE_ACTIVE == 0 {
+                dev_err!(self.dev, "bio: the {} is not active; the deletion cannot be saved\n", what);
+                return Err(EIO);
+            }
+            if state & crate::sbio::COMPONENT_STATE_SAVE_PENDING != 0 {
+                if !self.save_catacomb(who, kind, what) {
+                    dev_err!(self.dev, "bio: saving the {} failed\n", what);
+                    return Err(EIO);
+                }
+            } else if who.value() == user.value() && !retry {
+                dev_err!(
+                    self.dev,
+                    "bio: the enclave did not mark the user Catacomb for saving after 0x57; the deletion cannot be saved\n"
+                );
+                return Err(EIO);
+            }
+            if crate::catacomb::read(kind).is_none() {
+                dev_err!(self.dev, "bio: the {} has no durable host file\n", what);
+                return Err(EIO);
+            }
+        }
+        if !self.save_lockout() {
+            dev_err!(self.dev, "bio: lockout persistence failed after the deletion\n");
+            return Err(EIO);
+        }
+        if !self.resnapshot_identity_keybag() {
+            dev_err!(
+                self.dev,
+                "bio: Catacombs saved after the deletion but the identity-bag snapshot failed\n"
+            );
+            return Err(EIO);
+        }
         Ok(())
     }
 
