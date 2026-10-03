@@ -1178,6 +1178,19 @@ static void bt7932_remove(struct pci_dev *pdev)
 	/* Flush again after the last HCI callback has been retired. */
 	cancel_work_sync(&bt->tx_work);
 	skb_queue_purge(&bt->tx_queue);
+	/*
+	 * shutdown cleared bus mastering and synchronized the disabled IRQ.
+	 * Retaining DMA ownership must not leave an IRQ action attached to MSI
+	 * data which the PCI core releases when this driver is unbound.
+	 */
+	if (bt->irq_requested) {
+		free_irq(bt->irq, bt);
+		bt->irq_requested = false;
+	}
+	if (bt->vectors) {
+		pci_free_irq_vectors(pdev);
+		bt->vectors = false;
+	}
 	dev_err(&pdev->dev, "removal is unqualified; DMA, device and module retained until external reset\n");
 }
 
