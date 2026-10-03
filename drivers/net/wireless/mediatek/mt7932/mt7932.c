@@ -1285,8 +1285,8 @@ static void mt_shutdown(struct pci_dev *pdev)
 {
 	struct mt7932 *m = pci_get_drvdata(pdev);
 
-	WRITE_ONCE(m->running, false);
-	mt_write(m, W + 0x204, 0);
+	/* Close admission and join software users before disabling bus mastering. */
+	mt_stop_host(m);
 	pci_clear_master(pdev);
 	/* Storage remains allocated through reset, even if the engine is stuck. */
 }

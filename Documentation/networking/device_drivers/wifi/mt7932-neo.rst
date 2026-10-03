@@ -101,6 +101,8 @@ Limitations
   are refused while it is retained; they are not hardware-qualified on the Neo.
   Standard PCI sysfs removal of the root and radio functions is refused;
   arbitrary controller/IOMMU teardown and memory reuse remain unqualified.
+  Wi-Fi shutdown joins host producers before disabling bus mastering and
+  retains device-visible memory until reset.
 * Bluetooth PCI removal/quiescence is incomplete. Its software queue limit
   does not provide HCI backpressure; saturation can drop an accounted frame.
   Both require correction before production use. An activated Bluetooth module
