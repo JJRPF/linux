@@ -220,6 +220,9 @@ static int get_port_device_capability(struct pci_dev *dev)
 	struct pci_host_bridge *host = pci_find_host_bridge(dev->bus);
 	int services = 0;
 
+	if (host->reset_sensitive && (pcie_ports_native || pcie_ports_dpc_native))
+		dev_info_once(&dev->dev, "native PCIe error-recovery override withheld for reset-sensitive host\n");
+
 	/* Retained hosts have no HP service to consume firmware-enabled events. */
 	if (host->no_user_remove) {
 		pcie_capability_clear_word(dev, PCI_EXP_SLTCTL,

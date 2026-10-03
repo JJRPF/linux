@@ -2518,6 +2518,9 @@ static int apple_pcie_probe(struct platform_device *pdev)
 		bridge->reset_sensitive = true;
 		bridge->native_pcie_hotplug = false;
 		bridge->native_shpc_hotplug = false;
+		bridge->native_aer = false;
+		bridge->native_dpc = false;
+		dev_info_once(dev, "Neo radio host: native AER/DPC recovery disabled for retained-DMA bootstrap\n");
 	}
 	if (hw->root_bus_only)
 		dev_info(dev, "root-port probe only; downstream config is blocked\n");
