@@ -76,10 +76,50 @@ static void pci_sysfs_remove_independent_host_test(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_remove_allowed(h->grandchild));
 }
 
+static void pci_sysfs_reset_default_test(struct kunit *test)
+{
+	struct pci_sysfs_test_hierarchy *h = test->priv;
+
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_reset_allowed(h->root_port));
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_reset_allowed(h->endpoint));
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_reset_allowed(h->grandchild));
+}
+
+static void pci_sysfs_reset_retained_test(struct kunit *test)
+{
+	struct pci_sysfs_test_hierarchy *h = test->priv;
+
+	h->bridge->no_user_reset = true;
+	KUNIT_EXPECT_FALSE(test, pci_sysfs_user_reset_allowed(h->root_port));
+	KUNIT_EXPECT_FALSE(test, pci_sysfs_user_reset_allowed(h->endpoint));
+	KUNIT_EXPECT_FALSE(test, pci_sysfs_user_reset_allowed(h->grandchild));
+	/* Reset and removal policies are independent for other host users. */
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_remove_allowed(h->grandchild));
+	h->bridge->no_user_reset = false;
+	h->bridge->no_user_remove = true;
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_reset_allowed(h->grandchild));
+}
+
+static void pci_sysfs_reset_independent_host_test(struct kunit *test)
+{
+	struct pci_sysfs_test_hierarchy *h = test->priv;
+	struct pci_host_bridge *other;
+
+	other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	h->bridge->no_user_reset = true;
+	KUNIT_ASSERT_FALSE(test, pci_sysfs_user_reset_allowed(h->grandchild));
+	h->root_bus->bridge = &other->dev;
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_reset_allowed(h->grandchild));
+}
+
 static struct kunit_case pci_sysfs_test_cases[] = {
 	KUNIT_CASE(pci_sysfs_remove_default_test),
 	KUNIT_CASE(pci_sysfs_remove_retained_test),
 	KUNIT_CASE(pci_sysfs_remove_independent_host_test),
+	KUNIT_CASE(pci_sysfs_reset_default_test),
+	KUNIT_CASE(pci_sysfs_reset_retained_test),
+	KUNIT_CASE(pci_sysfs_reset_independent_host_test),
 	{}
 };
 

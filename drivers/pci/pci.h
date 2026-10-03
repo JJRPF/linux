@@ -1440,5 +1440,6 @@ static inline int pci_msix_write_tph_tag(struct pci_dev *pdev, unsigned int inde
 	 PCI_CONF1_EXT_REG(reg))
 
 bool pci_sysfs_user_remove_allowed(struct pci_dev *pdev);
+bool pci_sysfs_user_reset_allowed(struct pci_dev *pdev);
 
 #endif /* DRIVERS_PCI_H */

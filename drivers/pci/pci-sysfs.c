@@ -519,6 +519,12 @@ bool pci_sysfs_user_remove_allowed(struct pci_dev *pdev)
 	return !pci_find_host_bridge(pdev->bus)->no_user_remove;
 }
 
+bool pci_sysfs_user_reset_allowed(struct pci_dev *pdev)
+{
+	/* User resets can disrupt DMA still owned by a retained host. */
+	return !pci_find_host_bridge(pdev->bus)->no_user_reset;
+}
+
 static ssize_t remove_store(struct device *dev, struct device_attribute *attr,
 			    const char *buf, size_t count)
 {
@@ -579,7 +585,14 @@ static ssize_t reset_subordinate_store(struct device *dev,
 		return -EINVAL;
 
 	if (val) {
-		int ret = pci_try_reset_bridge(pdev);
+		int ret;
+
+		if (!pci_sysfs_user_reset_allowed(pdev)) {
+			dev_warn_ratelimited(&pdev->dev,
+					     "userspace reset is disabled by the host bridge\n");
+			return -EBUSY;
+		}
+		ret = pci_try_reset_bridge(pdev);
 
 		if (ret)
 			return ret;
@@ -1423,6 +1436,12 @@ static ssize_t reset_store(struct device *dev, struct device_attribute *attr,
 
 	if (val != 1)
 		return -EINVAL;
+
+	if (!pci_sysfs_user_reset_allowed(pdev)) {
+		dev_warn_ratelimited(&pdev->dev,
+				     "userspace reset is disabled by the host bridge\n");
+		return -EBUSY;
+	}
 
 	pm_runtime_get_sync(dev);
 	result = pci_reset_function(pdev);
