@@ -237,8 +237,13 @@ def main():
         result['result'] = 'WIFI_NETWORK_E2E_FAILED'
         result['error'] = str(error)
     finally:
-        log = run(['dmesg']).stdout
+        final_log = run(['dmesg'])
+        log = final_log.stdout
         result['kernel_faults'] = len(fault.findall(log))
+        if result['result'] in ('WIFI_SCAN_OBSERVED', 'WIFI_PHYSICAL_NETWORK_E2E_PASS') and (
+                final_log.returncode != 0 or result['kernel_faults']):
+            result['result'] = 'WIFI_NETWORK_E2E_FAILED'
+            result['error'] = 'Final kernel log unavailable or contains a driver fault'
         (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result, indent=2))
         print('ARTIFACT=' + str(out / 'result.json'))
