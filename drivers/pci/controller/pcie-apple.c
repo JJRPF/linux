@@ -2573,11 +2573,26 @@ static int apple_pcie_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	/* Only the retained Neo supplier needs admission before child publication. */
+	if (pcie->piodma_supplier) {
+		ret = apple_piodma_bootstrap_guard_begin(pcie->piodma_supplier, dev);
+		if (ret) {
+			apple_pcie_cleanup(pcie);
+			return dev_err_probe(dev, ret, "Neo lifecycle admission failed\n");
+		}
+	}
+
 	ret = pci_host_common_init(pdev, bridge, &apple_pcie_cfg_ecam_ops);
-	if (ret)
+	if (ret) {
 		apple_pcie_cleanup(pcie);
-	if (ret)
+		if (pcie->piodma_supplier) {
+			apple_piodma_bootstrap_guard_end(pcie->piodma_supplier);
+			/* Dependency deferral is legal only before publishing children. */
+			if (ret == -EPROBE_DEFER)
+				ret = -EIO;
+		}
 		return ret;
+	}
 
 	/*
 	 * Port mappings are allocated by the ECAM init callback. Register cleanup
@@ -2588,6 +2603,8 @@ static int apple_pcie_probe(struct platform_device *pdev)
 		/* Drivers must release their IRQs before the domains disappear. */
 		pci_host_common_remove(pdev);
 		apple_pcie_cleanup(pcie);
+		if (pcie->piodma_supplier)
+			apple_piodma_bootstrap_guard_end(pcie->piodma_supplier);
 		return ret;
 	}
 
@@ -2596,13 +2613,17 @@ static int apple_pcie_probe(struct platform_device *pdev)
 		/* Retained bootstrap ownership forbids host module teardown. */
 		if (!try_module_get(THIS_MODULE)) {
 			pci_host_common_remove(pdev);
+			apple_piodma_bootstrap_guard_end(pcie->piodma_supplier);
 			return -ENODEV;
 		}
 		ret = apple_pcie_neo_enumerate(bridge);
 		if (ret && !apple_piodma_bootstrap_retained(pcie->piodma_supplier)) {
-			/* No DMA pointer escaped: unwind and allow dependency retry. */
+			/* No DMA pointer escaped: remove children, then release vetoes. */
 			pci_host_common_remove(pdev);
 			module_put(THIS_MODULE);
+			apple_piodma_bootstrap_guard_end(pcie->piodma_supplier);
+			if (ret == -EPROBE_DEFER)
+				ret = -EIO;
 			return dev_err_probe(dev, ret, "Neo bootstrap preflight failed\n");
 		}
 		if (ret)

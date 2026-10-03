@@ -8,8 +8,8 @@
  *
  * This built-in driver deliberately retains its coherent arena and device
  * power reference until a coordinator-controlled full hardware reset. There
- * is no unbind interface or retry. Runtime guards refuse suspend and kexec
- * while the arena is held. Native ECAM is only
+ * is no unbind interface or hardware retry. Runtime guards cover host admission
+ * and retained hardware ownership. Native ECAM is only
  * opened by the host after a successful bootstrap and typed read checks.
  */
 #include <linux/bitfield.h>
@@ -35,6 +35,7 @@
 #include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/suspend.h>
+#include <linux/workqueue.h>
 
 #include "pcie-apple-piodma-diag.h"
 
@@ -98,9 +99,12 @@ struct apple_piodma_diag {
 	u64 pointer_prefix;
 	u8 secondary_bus;
 	bool retained;
+	bool guarded;
 	bool radio_admitted;
 	struct notifier_block pm_notifier;
 	struct kexec_blocker kexec_blocker;
+	struct delayed_work admission_retry;
+	struct device *retry_host;
 };
 
 /* A successful supplier probe owns its unpublished arena until full reset. */
@@ -116,7 +120,7 @@ static bool apple_piodma_trylock_sleep(unsigned int *flags)
 	 * Host probe holds device_lock(), while system sleep holds the transition
 	 * mutex before waiting for probes and taking device locks. Never wait
 	 * for that mutex here: if sleep won, defer without publishing any DMA.
-	 * If prime won, publish the veto before releasing the transition mutex.
+	 * If admission won, publish its veto before releasing the mutex.
 	 */
 	*flags = current->flags;
 	current->flags |= PF_NOFREEZE;
@@ -172,8 +176,8 @@ static int apple_piodma_pm_prepare(struct device *dev)
 {
 	struct apple_piodma_diag *diag = dev_get_drvdata(dev);
 
-	/* Acquire the prime's retained arena publication before permitting sleep. */
-	if (!diag || !smp_load_acquire(&diag->retained))
+	/* Acquire admission before either PCI children or DMA pointers escape. */
+	if (!diag || !smp_load_acquire(&diag->guarded))
 		return 0;
 	/*
 	 * A /dev/snapshot file may have sent its PREPARE notifier before this
@@ -573,6 +577,7 @@ static void apple_piodma_put_supplier(void *data)
 int apple_piodma_bootstrap_get(struct device *host, struct device **supplier)
 {
 	struct device_node *node, *host_node;
+	struct apple_piodma_diag *diag;
 	struct platform_device *pdev;
 	struct device_link *link;
 	bool correct_host;
@@ -597,9 +602,20 @@ int apple_piodma_bootstrap_get(struct device *host, struct device **supplier)
 		return -EINVAL;
 	if (!pdev)
 		return -EPROBE_DEFER;
-	if (!device_is_bound(&pdev->dev) || !platform_get_drvdata(pdev)) {
+	diag = platform_get_drvdata(pdev);
+	if (!device_is_bound(&pdev->dev) || !diag) {
 		put_device(&pdev->dev);
 		return -EPROBE_DEFER;
+	}
+	/* Reject late software attachment before any Neo host hardware setup. */
+	if (system_state > SYSTEM_RUNNING) {
+		put_device(&pdev->dev);
+		return -ESHUTDOWN;
+	}
+	/* Host probe holds its device lock; never rebuild a consumed hierarchy. */
+	if (atomic_read(&diag->attempted)) {
+		put_device(&pdev->dev);
+		return -EALREADY;
 	}
 	link = device_link_add(host, &pdev->dev, DL_FLAG_AUTOREMOVE_CONSUMER);
 	if (!link) {
@@ -614,25 +630,102 @@ int apple_piodma_bootstrap_get(struct device *host, struct device **supplier)
 }
 EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_get);
 
-int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
+static void apple_piodma_retry_admission(struct work_struct *work)
+{
+	struct apple_piodma_diag *diag =
+		container_of(to_delayed_work(work), struct apple_piodma_diag,
+			     admission_retry);
+	/* Acquire the matched host's permanent reference from the scheduler. */
+	struct device *host = smp_load_acquire(&diag->retry_host);
+	int ret;
+
+	if (system_state > SYSTEM_RUNNING || !host ||
+	    !device_is_registered(host) || atomic_read(&diag->attempted) ||
+	    READ_ONCE(diag->guarded))
+		return;
+	/* The core rechecks registration and binding under the host device lock. */
+	ret = device_attach(host);
+	if (ret < 0)
+		dev_dbg(diag->dev, "deferred host attachment returned %d\n", ret);
+	/* Only fresh pre-child guard contention can schedule another attempt. */
+}
+
+static void apple_piodma_schedule_admission(struct apple_piodma_diag *diag,
+					    struct device *host)
+{
+	struct device *previous;
+
+	if (system_state > SYSTEM_RUNNING || !device_is_registered(host))
+		return;
+	/* Publish a boot-lifetime reference; this supplier has one matched host. */
+	previous = cmpxchg(&diag->retry_host, NULL, get_device(host));
+	if (previous) {
+		put_device(host);
+		if (WARN_ON_ONCE(previous != host))
+			return;
+	}
+	mod_delayed_work(system_unbound_wq, &diag->admission_retry, HZ);
+}
+
+int apple_piodma_bootstrap_guard_begin(struct device *supplier, struct device *host)
 {
 	struct apple_piodma_diag *diag = dev_get_drvdata(supplier);
 	unsigned int sleep_flags;
 	int ret;
 
-	/* Contention must not consume the one permitted hardware attempt. */
+	/* Reboot blocks core probing too; reject an attachment already in flight. */
+	if (system_state > SYSTEM_RUNNING)
+		return -ESHUTDOWN;
+	/* A worker may have waited behind a host probe that consumed its attempt. */
+	if (atomic_read(&diag->attempted) || READ_ONCE(diag->guarded))
+		return -EALREADY;
+	/* This is the last dependency admission before PCI children exist. */
 	ret = apple_piodma_lock_transition(diag, &sleep_flags);
-	if (ret)
+	if (ret) {
+		if (ret == -EPROBE_DEFER)
+			apple_piodma_schedule_admission(diag, host);
 		return ret;
-	/* One hardware attempt, including permanent preflight failures. */
-	if (atomic_cmpxchg(&diag->attempted, 0, 1)) {
-		ret = -EALREADY;
-		goto err_kexec;
 	}
+	/* Do not wait for a worker that may be waiting on this host device lock. */
+	cancel_delayed_work(&diag->admission_retry);
 	diag->pm_notifier.notifier_call = apple_piodma_pm_notify;
 	ret = register_pm_notifier(&diag->pm_notifier);
-	if (ret)
-		goto err_kexec;
+	if (ret) {
+		kexec_unblock(&diag->kexec_blocker);
+	} else {
+		/* Publish both vetoes before permitting system sleep to proceed. */
+		smp_store_release(&diag->guarded, true);
+	}
+	unlock_system_sleep(sleep_flags);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_guard_begin);
+
+void apple_piodma_bootstrap_guard_end(struct device *supplier)
+{
+	struct apple_piodma_diag *diag = dev_get_drvdata(supplier);
+
+	/* Post-publication ownership is irreversible until hardware reset. */
+	if (!READ_ONCE(diag->guarded) || smp_load_acquire(&diag->retained))
+		return;
+	/* The host has removed every child before permitting sleep again. */
+	smp_store_release(&diag->guarded, false);
+	unregister_pm_notifier(&diag->pm_notifier);
+	kexec_unblock(&diag->kexec_blocker);
+}
+EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_guard_end);
+
+int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
+{
+	struct apple_piodma_diag *diag = dev_get_drvdata(supplier);
+	int ret;
+
+	/* Admission was completed before pci_host_common_init published children. */
+	if (!smp_load_acquire(&diag->guarded))
+		return -EINVAL;
+	/* One hardware attempt, including permanent preflight failures. */
+	if (atomic_cmpxchg(&diag->attempted, 0, 1))
+		return -EALREADY;
 	ret = apple_piodma_diag_root(diag, root);
 	if (!ret)
 		ret = apple_piodma_diag_idle(diag);
@@ -640,23 +733,12 @@ int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 		ret = apple_piodma_diag_initialize(diag);
 	if (!ret)
 		ret = apple_piodma_diag_submit(diag, 0);
-	if (ret) {
+	if (ret)
 		dev_err(supplier, "bootstrap failure=%d; %s; no retry\n", ret,
 			diag->retained ? "retained ownership" : "no hardware publication");
-		if (!diag->retained) {
-			unregister_pm_notifier(&diag->pm_notifier);
-			goto err_kexec;
-		}
-	} else {
+	else
 		dev_info(supplier, "BOOTSTRAP_VALIDATED word=%#x; one retained slot\n",
 			 diag->slots[0].result);
-	}
-	unlock_system_sleep(sleep_flags);
-	return ret;
-
-err_kexec:
-	kexec_unblock(&diag->kexec_blocker);
-	unlock_system_sleep(sleep_flags);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(apple_piodma_bootstrap_prime);
@@ -719,6 +801,7 @@ static int apple_piodma_diag_probe(struct platform_device *pdev)
 	if (!diag)
 		return -ENOMEM;
 	diag->dev = dev;
+	INIT_DELAYED_WORK(&diag->admission_retry, apple_piodma_retry_admission);
 	diag->kexec_blocker.reason =
 		"Neo radio bootstrap retains DMA memory until full hardware reset";
 	for (i = 0; i < PIODMA_REQUEST_COUNT; i++)
@@ -765,6 +848,11 @@ static void apple_piodma_diag_shutdown(struct platform_device *pdev)
 {
 	struct apple_piodma_diag *diag = platform_get_drvdata(pdev);
 
+	/*
+	 * Shutdown holds supplier/parent locks: never join a host attachment
+	 * here. Admission rejects shutdown, and the supplier lifetime is retained.
+	 */
+	cancel_delayed_work(&diag->admission_retry);
 	if (READ_ONCE(diag->retained))
 		dev_warn(&pdev->dev, "diagnostic arena retained; require full hardware reset\n");
 }
