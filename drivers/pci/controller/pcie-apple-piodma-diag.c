@@ -57,7 +57,7 @@
 
 static bool enumerate = true;
 module_param(enumerate, bool, 0444);
-MODULE_PARM_DESC(enumerate, "Boot-time gate for J700/T8140 radios only (read-only, default on)");
+MODULE_PARM_DESC(enumerate, "Boot-time radio gate (read-only, default on; no effect off J700/T8140)");
 
 struct apple_piodma_request {
 	u16 offset;

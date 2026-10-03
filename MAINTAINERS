@@ -1990,7 +1990,7 @@ F:	drivers/iio/common/aop_sensors/
 F:	drivers/pci/controller/pcie-apple-piodma*
 F:	drivers/soc/apple/aop.rs
 F:	drivers/tty/serial/apple_dockchannel*
-F:	include/linux/pci-apple-piodma.h
+F:	include/linux/soc/apple/pci-apple-piodma.h
 F:	rust/kernel/iio/common/aop_sensors.rs
 F:	rust/kernel/soc/apple/aop.rs
 F:	sound/soc/apple/t8140_aop_audio.rs

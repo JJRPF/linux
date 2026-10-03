@@ -41,7 +41,8 @@ also registers its AES CMAC implementation when CMAC is configured as a module.
 The earlier tested ``CONFIG_CRYPTO_CMAC=y`` is not a Wi-Fi driver requirement.
 
 Use the ordinary cfg80211 regulatory database and applicable country policy.
-The validated first-admission fallback is kernel country 00 with firmware XZ.
+Kernel country 00 uses firmware XZ and its mandatory ``world-XZ.bin`` package.
+An explicit country requires its own package; there is no world fallback.
 
 The host now disables link power states on the two radio endpoints before
 driver binding; no global PCIe ASPM performance policy is required. Load
@@ -64,9 +65,10 @@ Install the target unit's Bluetooth inputs before opening the gate.
 Do not reprobe after a failed or uncertain Bluetooth admission. The tested
 Wi-Fi driver owns function 0 and Bluetooth owns function 1.
 
-Use a saved NetworkManager WPA2 profile matching the current interface.
-KDE audio requires BlueZ, PipeWire, its PulseAudio compatibility service,
-WirePlumber and Bluetooth audio plugins in the logged-in user's session.
+Use a saved NetworkManager open or WPA2 profile matching the current interface.
+Audio in the desktop session requires BlueZ, PipeWire, its PulseAudio
+compatibility service, WirePlumber and Bluetooth audio plugins in the logged-in
+user's session.
 
 Local firmware inputs
 ---------------------
@@ -116,7 +118,7 @@ pattern, but an initramfs builder's glob handling may select only one match;
 inspect the resulting image rather than assuming every country is included.
 
 Load the radio drivers after these inputs are available on the real root.
-There are three distinct Wi-Fi failure classes:
+Wi-Fi reports these distinct failure classes:
 
 * An initialization probe failure can occur after DMA is published but before
   an interface is registered. Only ``initialization failed; DMA retired``
@@ -127,6 +129,11 @@ There are three distinct Wi-Fi failure classes:
   the requested policy file is absent before policy submission. Install that
   exact file and bring the interface up or retry a scan/connection. An identical
   ``iw reg set`` request alone does not trigger a retry in cfg80211.
+* A malformed country package reports ``error=-22`` before submission and
+  is not retried on interface up/scan/connect. Replace the exact named package
+  with a valid one, then shut down and start again. An unchanged
+  ``iw reg set`` request is ignored by cfg80211. If ``recovery-required=1``
+  is also present, use the external-reset recovery below instead.
 * ``recovery-required=1`` or ``RF_FAILED`` is a latched startup/calibration
   failure. Installing a file does not clear it in the bound epoch. A full
   external reset is required after a failed or uncertain admission.
@@ -134,13 +141,15 @@ There are three distinct Wi-Fi failure classes:
 Repeatable physical network test
 --------------------------------
 
-The manual test activates a saved profile and checks scan, WPA2, DHCP,
-gateway replies, DNS, HTTPS, KDE and kernel diagnostics. It is not run
-automatically. Run as root, with a fresh attempt name::
+The manual test activates a saved profile and checks scan, open or WPA2
+authentication, DHCP, gateway replies, DNS, HTTPS and kernel diagnostics.
+For a desktop session using Hyprland, use ``--desktop none`` for this network test.
+The helper restores the profile's original band even after a failure. It is
+not run automatically. Run as root, with a fresh attempt name::
 
   python3 tools/testing/selftests/drivers/net/mt7932_e2e.py \
     --expected-release "$(uname -r)" --profile "YOUR SAVED PROFILE" \
-    --connect --band a --attempt five-ghz
+    --connect --band a --attempt five-ghz --desktop none
 
 Use ``--band bg`` for 2.4 GHz. Require ``WIFI_PHYSICAL_NETWORK_E2E_PASS`` in
 the JSON artifact printed on completion. The artifact records three traffic
@@ -171,6 +180,16 @@ Limitations
   native slot hot-plug is disabled for this host. Per-link sysfs ASPM/Clock PM
   writes can lift the power-state restrictions; they are reapplied only at
   probe. Do not enable those link power states while the radios are active.
+  These guards protect against accidental teardown, not privileged access.
+  Root can still reset through raw PCI configuration writes (SBR, FLR or Link
+  Disable), override link power states, or unbind the root port's ``pcieport``
+  driver. None of these actions is supported while the retained host is active.
+* The Wi-Fi module pins itself before publishing its first DMA ring and cannot
+  be unloaded normally while DMA is retained. A checked reset during probe
+  failure may release that pin; a failed reset retains it. Never unload or
+  reprobe Wi-Fi while Bluetooth is active. Shutdown quiesces host producers
+  without freeing retained memory; use a full shutdown and external reset
+  after a failed or uncertain admission.
 * Bluetooth PCI removal/quiescence is incomplete. Its software queue limit
   does not provide HCI backpressure; saturation can drop an accounted frame.
   Both require correction before production use. An activated Bluetooth module

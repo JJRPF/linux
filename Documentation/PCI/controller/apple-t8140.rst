@@ -19,15 +19,22 @@ default value is also visible on other Macs; the machine and DT checks decide
 whether it has any effect.
 
 The shared kernel can keep suspend, hibernation and kexec support enabled.
-Immediately before the bootstrap first exposes its arena to hardware, a PM
-notifier refuses sleep transitions
-and its device prepare callback provides a second veto. This also covers
+Before the host creates PCI children, a short admission critical section
+acquires a kexec interlock and registers a PM notifier that refuses sleep
+transitions. Its device prepare callback provides a second veto. This also covers
 ``/dev/snapshot`` files opened before the supplier probes: later image, restore
 and suspend ioctls enter device PM without repeating the prepare notifier.
 A kexec interlock refuses loading or executing a replacement kernel,
 including an already loaded crash kernel. Image unloading remains permitted.
 These interlocks apply only to the active J700 bootstrap; other machines do not
-acquire them. Merely probing its supplier does not block transitions. Once the
+acquire them. Merely probing its supplier does not block transitions. The device
+prepare callback also checks this guarded pre-publication window. Admission
+contention may defer only before PCI children exist; a later failure is a hard
+error. Pre-child contention schedules a delayed attachment of this matched
+host, so a long-running kexec loader does not require another driver to bind
+before admission can retry. Only renewed contention queues another attempt;
+successful admission and hardware publication end these retries. Shutdown
+blocks late admission. A failure before memory publication releases the guards. Once the
 bootstrap retains memory, the protection persists even if enumeration or either
 radio's firmware loading fails. Thus the block applies on every default J700
 boot which reaches retained radio admission, regardless of installed firmware.
@@ -59,7 +66,7 @@ override the restriction; it is reapplied only at probe, not continuously.
 Do not enable those link power states while the Neo radios are admitted.
 
 The PIODMA arena remains allocated until external reset. Standard PCI sysfs
-``remove`` writes for the root port and radio functions return ``-EBUSY``
+``remove`` writes for the root port and radio functions return ``-EOPNOTSUPP``
 while the host has its retained supplier; the removal attributes remain present.
 The same hierarchy refuses userspace ``reset`` and ``reset_subordinate``
 writes, and its host does not hand native PCIe or SHPC slot hot-plug control
@@ -68,11 +75,15 @@ VFIO assignment is refused on this host because it exposes reset operations
 outside PCI sysfs. Automatic native AER/DPC port recovery is also withheld:
 its bus or link reset has no qualified retained-memory contract here. A hardware
 fault requires external reset rather than guessed recovery.
-The host and activated Bluetooth modules are pinned until reset. Arbitrary
+The host and activated Wi-Fi/Bluetooth modules are pinned until reset. Arbitrary
 platform-device removal, IOMMU teardown, forced module removal, memory reuse
 and arbitrary downstream devices remain unqualified. Do not remove the
 controller or its IOMMUs while this experiment is active.
 These lifecycle contracts require further work before production support.
+They protect against accidental teardown and are not a security boundary.
+Root can still reset through raw configuration writes, including secondary-bus
+reset, FLR and Link Disable, change per-link ASPM controls or unbind the root
+port's ``pcieport`` driver. Do not perform these operations on an admitted Neo.
 
 J700's ``wifi0`` alias and PCI endpoint node allow the public bootloader to
 pass the unit's own Wi-Fi address through ``local-mac-address``. The zero
