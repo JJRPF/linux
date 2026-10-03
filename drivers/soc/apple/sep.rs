@@ -1785,6 +1785,17 @@ impl SepData {
                 failure = Some(ENODEV);
                 break;
             }
+            // The hwrng fill thread is not frozen for system sleep. On J414s
+            // its requests during s2idle got no reply, the sends timed out,
+            // and every Touch ID command after resume failed. Ask nothing
+            // between the sleep notification and resume; on an error the core
+            // retries 10 s later.
+            if self.suspending.load(Relaxed) {
+                if written > 0 {
+                    break;
+                }
+                return EAGAIN.to_errno();
+            }
             match self.get_entropy_word() {
                 Ok(value) => {
                     // SAFETY: the core guarantees `buf` is valid for `max`
