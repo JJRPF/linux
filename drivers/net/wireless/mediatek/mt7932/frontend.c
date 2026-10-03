@@ -503,7 +503,7 @@ static void mt_cal_work(struct work_struct *work)
 		if (ret < 0)
 			break;
 		ret = mt_cal_procedure(m, pieces, ret,
-				       get_unaligned_le32(request + 8) == 1 ? 3 : 4,
+				       mt7932_cal_request_replies(request),
 				       m->preload_version);
 		if (ret)
 			break;

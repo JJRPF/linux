@@ -65,6 +65,14 @@ fail:
 	return ret;
 }
 
+/* D7 band 1 (5 GHz) requests three logical procedures; 2 GHz needs four.
+ * Both startup draining and runtime servicing use the same reply contract.
+ */
+static inline unsigned int mt7932_cal_request_replies(const u8 request[16])
+{
+	return get_unaligned_le32(request + 8) == 1 ? 3 : 4;
+}
+
 struct mt7932_cal_segment {
 	const u8 *data;
 	size_t length;

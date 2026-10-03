@@ -131,7 +131,8 @@ int mt_calibration_gate(struct mt7932 *m)
 					  m->smart_version, m->module_byte, pieces);
 		if (ret < 0)
 			goto out;
-		ret = mt_cal_procedure(m, pieces, ret, 4, m->preload_version);
+		ret = mt_cal_procedure(m, pieces, ret,
+				       mt7932_cal_request_replies(request), m->preload_version);
 		if (ret)
 			goto out;
 		dev_info(&m->pdev->dev, "CAL_REQUEST_SERVICED: channel=%u\n", get_unaligned_le32(request + 12));
