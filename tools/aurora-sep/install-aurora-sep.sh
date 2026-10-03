@@ -5,7 +5,7 @@
 #   ... | bash -s -- --read-only      install, but never let the driver write to the enclave
 #   ... | bash -s -- --uninstall      go back to the kernel this Mac had before
 #
-# Kernel: iconidentify/aurora-linux custom/sep (0cde04307749), aurora-silicon/linux aurora-wip plus the
+# Kernel: iconidentify/aurora-linux custom/sep (fd04a98e74da), aurora-silicon/linux aurora-wip plus the
 # Secure Enclave (Touch ID) driver, Thunderbolt (#8), the Apple video
 # decoder (#45), the M2 Max (t6021) profile and the consolidated Touch ID
 # series (aurora-silicon/linux#69: matching after a reboot on every profile,
@@ -42,6 +42,18 @@
 # 11.25.1 (installer only, same packages): rebuilding m1n1's stage 2 now keeps
 # the rest of /etc/default/update-m1n1, so a MacBook Neo keeps its own M1N1=
 # and U_BOOT= instead of being rebuilt from an m1n1 that cannot boot it.
+# 11.31 brings up PCIe over Thunderbolt on the M1 Pro/Max and M2 Pro/Max by
+# default (iconidentify/aurora-linux#10, Wesley Grimes, with follow-up fixes;
+# pcie_apple.tunnel_kernel_init=0 turns it off): USB, Ethernet and audio
+# behind Thunderbolt docks and displays now work there as they do on M1. It
+# builds the drivers for the Intel Ethernet in Thunderbolt 3 and 4 docks (igb
+# and igc), and carries the MacBook Neo's Wi-Fi in the shared kernel
+# (iconidentify/aurora-linux#11). On a Neo the radios need that Neo's own
+# firmware, calibration and country files, which the script checks for; sleep
+# is refused while they are active, and Bluetooth is off by default.
+# The Neural Engine now powers off when idle (aurora-silicon/linux#155, Joshua
+# Warren), and is switched on for the M1, M1 Pro and M2 Pro as well as the M1
+# Max and M2 Max.
 # It replaces linux-asahi (or linux-aurora) as a pacman package,
 # so mkinitcpio and update-m1n1 run from their own hooks; on a GRUB Mac this
 # script regenerates grub.cfg and keeps the previous kernel as a fallback entry.
@@ -70,8 +82,8 @@ set -euo pipefail
 
 # The kernel package version and the release tag move independently: a release
 # that only changes m1n1 reuses the previous kernel packages unchanged.
-VERSION=7.1.12.aurora2-11.25
-TAG=sep-7.1.12.aurora2-11.25.1
+VERSION=7.1.12.aurora2-11.31
+TAG=sep-7.1.12.aurora2-11.31
 # Packages are fetched from this script's own tag, never from "latest": the
 # checksums below belong to this release and nothing else.
 RELEASE_URL=https://github.com/iconidentify/aurora-linux/releases/download/$TAG
@@ -79,8 +91,8 @@ RELEASES_API=https://api.github.com/repos/iconidentify/aurora-linux/releases
 # Where to always get the current script, whatever this copy turns out to be.
 LATEST_URL=https://github.com/iconidentify/aurora-linux/releases/latest/download/install-aurora-sep.sh
 PACKAGES=(
-  "linux-aurora-$VERSION-aarch64.pkg.tar.zst f8b78b21f4031113a06c7f7fc7cbe1d72a23ba803adfcfc838ee3e927d3d0c85"
-  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst a1a1524ccc35b4b4c82e4a01fda90ae13c43719ecb8dfc8108fa9a008d9500e6"
+  "linux-aurora-$VERSION-aarch64.pkg.tar.zst 7e7e04db48e502325f9f287ffc01543140beb64feb63719f69f937851d7cd345"
+  "linux-aurora-headers-$VERSION-aarch64.pkg.tar.zst a04ae0735998f409976fb0dd815f2de53eee2740c7326aef2f6ea403f3077494"
   "libfprint-1.94.100-1.1-aarch64.pkg.tar.zst bc7d9762db6644f2cfb58ddb209602c1d513845eb1498c098e01f12600fcbdf9"
   "aurora-touchid-20261002-1-any.pkg.tar.zst a9dda6e0526874e4ac760629f3aa5bd37421379a1d8af34000f3dc7b73a21b17"
   "m1n1-aurora-1.6.1.aurora3-1-aarch64.pkg.tar.zst bc3451aaa88bc3f4912bc3613f9569aa8f3e05f376fa851fa837b5e2080e8c2f"
@@ -502,6 +514,50 @@ ane_dkms_notice() {
     Pro/Max."
 }
 
+# The MacBook Neo's Wi-Fi and Bluetooth need this Neo's own firmware,
+# calibration and country files from its macOS; none ship with Linux, and
+# another unit's files can't be substituted. Report what is there without
+# failing the install: the kernel runs without them, the radios stay off.
+# File names follow Documentation/networking/device_drivers/wifi/mt7932-neo.rst.
+neo_radio_notice() {
+  local fw=/usr/lib/firmware/mediatek f missing="" mac cc=""
+  for f in IZUBA_WIFI_MT7932_patch_mcu_1_2_hdr.bin IZUBA_W7932_2.bin ppr.bin \
+    config-original.bin wcal.bin oca2.bin; do
+    [[ -s $fw/mt7932/$f ]] || missing+=" mt7932/$f"
+  done
+  # The policy is per country with no fallback to the world file once a
+  # country is set; world-XZ.bin only covers the unset ("00") case.
+  if command -v iw >/dev/null; then
+    cc=$(iw reg get 2>/dev/null | awk '$1=="global"{g=1; next} g && $1=="country"{sub(":","",$2); print $2; exit}')
+  fi
+  if [[ -z $cc || $cc == 00 ]]; then
+    [[ -s $fw/mt7932/policy/world-XZ.bin ]] || missing+=" mt7932/policy/world-XZ.bin"
+  else
+    [[ -s $fw/mt7932/policy/$cc.bin ]] || missing+=" mt7932/policy/$cc.bin (country $cc)"
+  fi
+  mac=$(find /proc/device-tree -path '*wifi*' -name local-mac-address 2>/dev/null | head -1)
+  if [[ -n $mac ]] && od -An -tx1 "$mac" | grep -q '[1-9a-f]'; then
+    say "Wi-Fi MAC address: provided by this Neo's m1n1"
+  else
+    warn "m1n1 did not provide the Wi-Fi MAC address (wifi0 local-mac-address); Wi-Fi will refuse to start"
+  fi
+  if [[ -z $missing ]]; then
+    say "Wi-Fi firmware, calibration and country files: all present under $fw/mt7932"
+  else
+    warn "Wi-Fi needs this Neo's own files under $fw, and these are missing:$missing
+    They come from this Neo's own macOS and can't be shared between machines.
+    See Documentation/networking/device_drivers/wifi/mt7932-neo.rst in
+    iconidentify/aurora-linux. Wi-Fi stays off until they are all there."
+  fi
+  say "MacBook Neo, read before you reboot:
+    - Sleep isn't supported on the Neo yet. While Wi-Fi/Bluetooth support is
+      active (the default) the kernel refuses suspend, so closing the lid does
+      nothing: shut down instead of putting it in a bag.
+    - Wi-Fi works on 2.4 GHz and on 5 GHz channels 36-48 only, with WPA2 (AES)
+      or open networks. 5 GHz networks on channels 149-165 won't be listed.
+    - Bluetooth is off by default in this release."
+}
+
 install_all() {
   local entry file sha kernel chain
   version_notice
@@ -575,6 +631,7 @@ install_all() {
   calibration
   $sudo systemctl daemon-reload
   sep_policy
+  if is_neo; then neo_radio_notice; fi
   pacman -Q linux-aurora libfprint aurora-touchid
   echo
   if [[ -f $MODPROBE_CONF ]]; then
@@ -772,12 +829,16 @@ SAFETY, NON-NEGOTIABLE
        An EMPTY /sys/bus/thunderbolt/devices/ with nothing plugged in is
        normal: routers only appear when a device is attached. Do not report
        that as a failure.
-       Also normal, on every Mac except the M1 Air and 13" M1 MacBook Pro:
-         PCIe-C tunnel disabled: m1n1 handoff is not initialized
-       Anything behind a dock's PCIe controller -- ethernet, storage, and on
-       Thunderbolt 3 docks such as the CalDigit TS3 the USB ports too -- only
-       works on t8103 so far. Displays, and USB on USB4 docks, do not need the
-       PCIe tunnel. Report the line only if you see it on a t8103.
+       Anything behind a Thunderbolt 3 dock's PCIe controller -- Ethernet,
+       storage, and on docks such as the CalDigit TS3 Plus the USB ports too --
+       now comes up on M1, M1 Pro/Max and M2 Pro/Max. On the Pro/Max chips the
+       kernel starts the tunnel itself when a dock is plugged in, and logs
+         port ... cold init done, status 0x3 ...
+       (pcie_apple.tunnel_kernel_init=0 turns that off). Displays, and USB on
+       USB4 docks, do not need the PCIe tunnel. On the M2 MacBook Air/Pro 13"
+       and on M3 the tunnel isn't supported yet, so this line is normal there:
+         PCIe-C tunnel disabled: not initialized by m1n1 or the kernel
+       Report it if you see it on an M1, M1 Pro/Max or M2 Pro/Max.
 
    6b. With a dock or a DisplayPort monitor, in this order:
          - attached at boot: does the display come up, and at what resolution
@@ -793,8 +854,15 @@ SAFETY, NON-NEGOTIABLE
            (no dock), attached at boot. Does each come up at its own native
            resolution? Quote "hyprctl monitors" (name, mode, and the port each
            is on). Then log out and back in, and repeat.
-         - PCIe behind the dock: ethernet, USB storage, card readers - do they
-           enumerate and still work after a replug
+         - PCIe behind the dock: Ethernet, USB storage, card readers, and a
+           keyboard and mouse on the dock's USB ports. Do they all work, and
+           still work after a replug? Quote:
+             lspci -nn
+             sudo dmesg | grep -E 'cold init done|link up after|translation fault|HC died'
+           Any "translation fault" or "HC died" line is a failure to report.
+           For a full report, after plugging the dock in:
+             curl -fsSLO https://raw.githubusercontent.com/iconidentify/aurora-linux/refs/tags/sep-7.1.12.aurora2-11.31/tools/aurora-tb/tb-pcie-report
+             sudo sh tb-pcie-report --no-wait
 
    6c. Across suspend:
          systemctl suspend
@@ -817,23 +885,47 @@ SAFETY, NON-NEGOTIABLE
 
 9. NEURAL ENGINE
    This build carries the in-tree Apple Neural Engine driver
-   (aurora-silicon/linux#155), switched on only for the M1 Max and the M2 Max.
-   On every other Mac no Neural Engine lines are expected, and that is a pass.
+   (aurora-silicon/linux#155), switched on for the M1, M1 Pro, M1 Max, M2 Pro
+   and M2 Max. On every other Mac no Neural Engine lines are expected, and that
+   is a pass. The ANE now powers off about 1.5 s after its last use:
+     cat /sys/bus/platform/drivers/ane*/*.ane/power/runtime_status
+   should read "suspended" while nothing uses it (M1 family).
      pacman -Q omarchy-ane-dkms 2>/dev/null   # if installed, say so: its modules replace this kernel's
      modinfo -F filename ane ane_t6021
      ls -l /dev/accel/ 2>/dev/null
      sudo dmesg | grep -iE '\bane\b|ane_t6021|neural' | head -40
-   M1 Max PASS: the ane module is bound, /dev/accel/accel0 exists, and the
-   module path is under kernel/drivers/accel/ane (not updates/dkms).
-   M2 Max: without the Neural Engine firmware, expect a firmware load error and
-   nothing else broken. With it (fetched by Joshua Warren's
+   M1, M1 Pro, M1 Max PASS: the ane module is bound, /dev/accel/accel0 exists,
+   and the module path is under kernel/drivers/accel/ane (not updates/dkms).
+   M2 Pro, M2 Max: without the Neural Engine firmware, expect a firmware load
+   error and nothing else broken. With it (fetched by Joshua Warren's
    omarchy-ane-firmware-fetch), expect ane_t6021 bound and /dev/accel/accel0.
+   The M2 Pro has not run it before this build: report it either way.
    If omarchy-ane's tools are installed, also run omarchy-ane-check, and on an
-   M2 Max omarchy-ane-check --smoke; quote their result lines.
+   M2 Pro/Max omarchy-ane-check --smoke; quote their result lines.
    Report any kernel log line at emergency or alert level, and whether idle
    battery drain changed against the previous build. If the Mac does not finish
    booting, add module_blacklist=ane,ane_t6021 to the kernel command line from
    the boot menu, and report that.
+
+10. MACBOOK NEO (J700) ONLY
+   The Neo's Wi-Fi is in the regular kernel now. It needs this Neo's own
+   firmware, calibration and country files; the installer listed any that
+   were missing. Never install another Neo's files.
+     sudo dmesg | grep -iE 'mt7932|piodma|REGULATORY|CALIBRATION|admission'
+     iw reg get | head -3
+     nmcli device wifi list | head
+   - Without the country file, expect
+       REGULATORY_BLOCKED: <CC> generation=N error=-2 recovery-required=0
+     and nothing else broken; quote it. After installing that file, retry a
+     scan (nmcli device wifi rescan): it should come up without a reboot.
+   - With every file present: does it scan, connect to a WPA2 network and
+     pass traffic? Try a 2.4 GHz network and a 5 GHz one on channels 36-48.
+     Networks on channels 149-165 are not listed, by design.
+   - systemctl suspend is refused by design while the radios are active.
+     Expect "sleep refused: Neo radio bootstrap retains DMA memory until full
+     hardware reset" and quote it.
+   - Bluetooth is off by default. Only test it if the owner asks (see
+     Documentation/networking/device_drivers/wifi/mt7932-neo.rst).
 
    Report "not tested" honestly rather than guessing, for any of the above.
 
