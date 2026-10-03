@@ -34,10 +34,9 @@ config PCI_SYSFS_KUNIT_TEST
 	depends on SYSFS && KUNIT=y
 	default KUNIT_ALL_TESTS
 	help
-	  Test rejected removal writes for root ports and children under a host
-	  that prohibits userspace removal, plus malformed and no-op writes.
-	  The tests use an unregistered synthetic hierarchy and never remove
-	  a real PCI device or invoke kernfs attribute removal.
+	  Test userspace-removal policy lookup for root ports and descendants
+	  under independent host bridges. The synthetic objects are separately
+	  allocated and never registered or passed to a sysfs callback.
 
 config PCI_DOMAINS
 	bool

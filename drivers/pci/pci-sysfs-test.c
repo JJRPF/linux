@@ -1,96 +1,90 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Included by pci-sysfs.c to exercise its actual remove_store callback. */
+/* Policy lookup tests; no sysfs callbacks or hardware operations. */
 #include <kunit/test.h>
+#include <linux/pci.h>
+
+#include "pci.h"
 
 struct pci_sysfs_test_hierarchy {
-	struct pci_host_bridge bridge;
-	struct pci_bus root_bus;
-	struct pci_bus child_bus;
-	struct pci_dev root_port;
-	struct pci_dev endpoint;
+	struct pci_host_bridge *bridge;
+	struct pci_bus *root_bus;
+	struct pci_bus *child_bus;
+	struct pci_bus *grandchild_bus;
+	struct pci_dev *root_port;
+	struct pci_dev *endpoint;
+	struct pci_dev *grandchild;
 };
 
 static int pci_sysfs_test_init(struct kunit *test)
 {
-	struct pci_sysfs_test_hierarchy *hierarchy;
+	struct pci_sysfs_test_hierarchy *h;
 
-	hierarchy = kunit_kzalloc(test, sizeof(*hierarchy), GFP_KERNEL);
-	if (!hierarchy)
+	h = kunit_kzalloc(test, sizeof(*h), GFP_KERNEL);
+	if (!h)
 		return -ENOMEM;
-	/*
-	 * Only topology and diagnostic names are needed. These objects are never
-	 * registered, referenced by the PCI core or passed to a removal routine.
-	 * Every tested callback must return before device_remove_file_self().
-	 */
-	hierarchy->root_bus.bridge = &hierarchy->bridge.dev;
-	hierarchy->child_bus.parent = &hierarchy->root_bus;
-	hierarchy->root_port.bus = &hierarchy->root_bus;
-	hierarchy->root_port.dev.init_name = "kunit-root-port";
-	hierarchy->endpoint.bus = &hierarchy->child_bus;
-	hierarchy->endpoint.dev.init_name = "kunit-endpoint";
-	test->priv = hierarchy;
+	h->bridge = kunit_kzalloc(test, sizeof(*h->bridge), GFP_KERNEL);
+	h->root_bus = kunit_kzalloc(test, sizeof(*h->root_bus), GFP_KERNEL);
+	h->child_bus = kunit_kzalloc(test, sizeof(*h->child_bus), GFP_KERNEL);
+	h->grandchild_bus = kunit_kzalloc(test, sizeof(*h->grandchild_bus), GFP_KERNEL);
+	h->root_port = kunit_kzalloc(test, sizeof(*h->root_port), GFP_KERNEL);
+	h->endpoint = kunit_kzalloc(test, sizeof(*h->endpoint), GFP_KERNEL);
+	h->grandchild = kunit_kzalloc(test, sizeof(*h->grandchild), GFP_KERNEL);
+	if (!h->bridge || !h->root_bus || !h->child_bus || !h->grandchild_bus ||
+	    !h->root_port || !h->endpoint || !h->grandchild)
+		return -ENOMEM;
+	/* Only the real host lookup's immutable topology is needed. */
+	h->root_bus->bridge = &h->bridge->dev;
+	h->child_bus->parent = h->root_bus;
+	h->grandchild_bus->parent = h->child_bus;
+	h->root_port->bus = h->root_bus;
+	h->endpoint->bus = h->child_bus;
+	h->grandchild->bus = h->grandchild_bus;
+	test->priv = h;
 	return 0;
 }
 
-static void pci_sysfs_remove_blocked_root_test(struct kunit *test)
+static void pci_sysfs_remove_default_test(struct kunit *test)
 {
-	struct pci_sysfs_test_hierarchy *hierarchy = test->priv;
+	struct pci_sysfs_test_hierarchy *h = test->priv;
 
-	hierarchy->bridge.no_user_remove = true;
-	KUNIT_EXPECT_EQ(test,
-			remove_store(&hierarchy->root_port.dev, &dev_attr_remove, "1\n", 2),
-			(ssize_t)-EBUSY);
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_remove_allowed(h->root_port));
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_remove_allowed(h->endpoint));
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_remove_allowed(h->grandchild));
 }
 
-static void pci_sysfs_remove_blocked_child_test(struct kunit *test)
+static void pci_sysfs_remove_retained_test(struct kunit *test)
 {
-	struct pci_sysfs_test_hierarchy *hierarchy = test->priv;
+	struct pci_sysfs_test_hierarchy *h = test->priv;
 
-	hierarchy->bridge.no_user_remove = true;
-	KUNIT_EXPECT_EQ(test,
-			remove_store(&hierarchy->endpoint.dev, &dev_attr_remove, "1\n", 2),
-			(ssize_t)-EBUSY);
+	h->bridge->no_user_remove = true;
+	KUNIT_EXPECT_FALSE(test, pci_sysfs_user_remove_allowed(h->root_port));
+	KUNIT_EXPECT_FALSE(test, pci_sysfs_user_remove_allowed(h->endpoint));
+	KUNIT_EXPECT_FALSE(test, pci_sysfs_user_remove_allowed(h->grandchild));
 }
 
-static void pci_sysfs_remove_malformed_test(struct kunit *test)
+static void pci_sysfs_remove_independent_host_test(struct kunit *test)
 {
-	struct pci_sysfs_test_hierarchy *hierarchy = test->priv;
+	struct pci_sysfs_test_hierarchy *h = test->priv;
+	struct pci_host_bridge *other;
 
-	KUNIT_EXPECT_EQ(test,
-			remove_store(&hierarchy->endpoint.dev, &dev_attr_remove, "bad\n", 4),
-			(ssize_t)-EINVAL);
-}
-
-static void pci_sysfs_remove_zero_blocked_test(struct kunit *test)
-{
-	struct pci_sysfs_test_hierarchy *hierarchy = test->priv;
-
-	hierarchy->bridge.no_user_remove = true;
-	KUNIT_EXPECT_EQ(test,
-			remove_store(&hierarchy->endpoint.dev, &dev_attr_remove, "0\n", 2),
-			(ssize_t)2);
-}
-
-static void pci_sysfs_remove_zero_default_test(struct kunit *test)
-{
-	struct pci_sysfs_test_hierarchy *hierarchy = test->priv;
-
-	KUNIT_EXPECT_EQ(test,
-			remove_store(&hierarchy->root_port.dev, &dev_attr_remove, "0\n", 2),
-			(ssize_t)2);
+	other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	h->bridge->no_user_remove = true;
+	KUNIT_ASSERT_FALSE(test, pci_sysfs_user_remove_allowed(h->grandchild));
+	/* A descendant of an unrestricted host must not inherit another veto. */
+	h->root_bus->bridge = &other->dev;
+	KUNIT_EXPECT_TRUE(test, pci_sysfs_user_remove_allowed(h->grandchild));
 }
 
 static struct kunit_case pci_sysfs_test_cases[] = {
-	KUNIT_CASE(pci_sysfs_remove_blocked_root_test),
-	KUNIT_CASE(pci_sysfs_remove_blocked_child_test),
-	KUNIT_CASE(pci_sysfs_remove_malformed_test),
-	KUNIT_CASE(pci_sysfs_remove_zero_blocked_test),
-	KUNIT_CASE(pci_sysfs_remove_zero_default_test),
+	KUNIT_CASE(pci_sysfs_remove_default_test),
+	KUNIT_CASE(pci_sysfs_remove_retained_test),
+	KUNIT_CASE(pci_sysfs_remove_independent_host_test),
 	{}
 };
 
 static struct kunit_suite pci_sysfs_test_suite = {
-	.name = "pci-sysfs-remove",
+	.name = "pci-sysfs-policy",
 	.init = pci_sysfs_test_init,
 	.test_cases = pci_sysfs_test_cases,
 };

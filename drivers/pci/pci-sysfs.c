@@ -513,21 +513,25 @@ static ssize_t dev_rescan_store(struct device *dev,
 static struct device_attribute dev_attr_dev_rescan = __ATTR(rescan, 0200, NULL,
 							    dev_rescan_store);
 
+bool pci_sysfs_user_remove_allowed(struct pci_dev *pdev)
+{
+	/* Bus/bridge references keep this immutable host property alive. */
+	return !pci_find_host_bridge(pdev->bus)->no_user_remove;
+}
+
 static ssize_t remove_store(struct device *dev, struct device_attribute *attr,
 			    const char *buf, size_t count)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
-	struct pci_host_bridge *bridge;
 	unsigned long val;
 
 	if (kstrtoul(buf, 0, &val) < 0)
 		return -EINVAL;
 
 	if (val) {
-		/* Bus/bridge references keep this immutable host property alive. */
-		bridge = pci_find_host_bridge(pdev->bus);
-		if (bridge->no_user_remove) {
-			pci_warn(pdev, "userspace removal is disabled by the host bridge\n");
+		if (!pci_sysfs_user_remove_allowed(pdev)) {
+			dev_warn_ratelimited(&pdev->dev,
+					     "userspace removal is disabled by the host bridge\n");
 			return -EBUSY;
 		}
 		if (device_remove_file_self(dev, attr))
@@ -1799,10 +1803,6 @@ const struct attribute_group *pci_dev_groups[] = {
 	ARCH_PCI_DEV_GROUPS
 	NULL,
 };
-
-#ifdef CONFIG_PCI_SYSFS_KUNIT_TEST
-#include "pci-sysfs-test.c"
-#endif
 
 static const struct attribute_group pci_dev_hp_attr_group = {
 	.attrs = pci_dev_hp_attrs,
