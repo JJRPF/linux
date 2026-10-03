@@ -530,6 +530,14 @@ static int mt_dma_setup(struct mt7932 *m)
 	m->aux = mt_alloc(m, 0x320, &m->aux_dma);
 	if (!m->ipc || !m->aux)
 		return -ENOMEM;
+	/* Pin before the first endpoint-visible DMA pointer. A live Bluetooth
+	 * sibling forbids FLR, so normal module unload must never enter remove
+	 * and hold a device lock while waiting for an impossible reset.
+	 */
+	if (!try_module_get(THIS_MODULE))
+		return -ENODEV;
+	m->module_pinned = true;
+	WRITE_ONCE(m->dma_owned, true);
 	for (i = 0; i < ARRAY_SIZE(m->tx); i++) {
 		struct mt7932_ring *q = &m->tx[i];
 
@@ -562,7 +570,6 @@ static int mt_dma_setup(struct mt7932 *m)
 	mt_rmw(m, W + 0x2b0, 0, BIT(6));
 	/* All endpoint-visible storage and interrupt state now have an owner. */
 	dma_wmb();
-	WRITE_ONCE(m->dma_owned, true);
 	pci_set_master(m->pdev);
 	WRITE_ONCE(m->running, true);
 	mt_rmw(m, W + 0x208, 0, BIT(0) | BIT(2));
@@ -1084,6 +1091,10 @@ static int mt_reset_retained(struct mt7932 **epoch)
 	if (ret)
 		return ret;
 	old->dma_owned = false;
+	if (old->module_pinned) {
+		old->module_pinned = false;
+		module_put(THIS_MODULE);
+	}
 	dev_info(&pdev->dev, "RESET_TEST: function reset complete; retaining old DMA\n");
 	fresh = devm_kzalloc(&pdev->dev, sizeof(*fresh), GFP_KERNEL);
 	if (!fresh)
@@ -1150,8 +1161,14 @@ static int mt_retire_dma(struct mt7932 *m)
 		ret = mt_dma_stop(m);
 	if (!ret)
 		ret = mt_function_reset(m);
-	if (!ret)
+	if (!ret) {
 		m->dma_owned = false;
+		/* Probe/remove's framework reference still owns this callback. */
+		if (m->module_pinned) {
+			m->module_pinned = false;
+			module_put(THIS_MODULE);
+		}
+	}
 	return ret;
 }
 

@@ -77,7 +77,7 @@ struct mt7932 {
 	bool running;
 	bool stopping;
 	bool irq_requested, vectors_allocated, wiphy_registered;
-	bool dma_owned;
+	bool dma_owned, module_pinned;
 	struct completion reset_retry;
 	int removal_error;
 	bool ram_config;
