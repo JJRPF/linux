@@ -204,8 +204,14 @@ void mt_data_receive(struct mt7932 *m, const struct mt7932_rx_frame *frame)
 	if (frame->unicast && frame->rate_valid) {
 		m->station_rx_rate_valid = mt7932_rx_rate(frame->rxv, m->phy_cap[4],
 						       &m->station_rx_rate);
-		/* Current association contract admits only 20 MHz and no 5 GHz CCK. */
-		if (((frame->rxv >> 12) & 7) ||
+		/* Report only RX widths admitted by the negotiated channel.
+		 * The qualified decoder already bounds mode/MCS/NSS/GI; the
+		 * association remains 20 MHz on 2 GHz and at most 80 MHz on 5 GHz.
+		 */
+		if (((frame->rxv >> 12) & 7) >
+		    (m->connect_chandef.width == NL80211_CHAN_WIDTH_80 ? 2 :
+		     m->connect_chandef.width == NL80211_CHAN_WIDTH_40 ? 1 : 0) ||
+		    (frame->channel <= 14 && ((frame->rxv >> 12) & 7)) ||
 		    (frame->channel > 14 && !((frame->rxv >> 24) & 15)))
 			m->station_rx_rate_valid = false;
 		m->station_rx_rate_time = jiffies;
