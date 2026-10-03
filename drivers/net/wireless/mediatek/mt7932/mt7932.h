@@ -185,6 +185,7 @@ int mt_recovery_gate(struct mt7932 *m);
 int mt_cal_procedure(struct mt7932 *m, struct mt7932_cal_piece *pieces,
 				    unsigned int count, unsigned int logical, u8 context_version);
 int mt_calibration_gate(struct mt7932 *m);
+void mt_cal_input_error(struct mt7932 *m, int error, unsigned int tag, const char *stage);
 void mt_data_clean_locked(struct mt7932 *m);
 void mt_data_clean(struct mt7932 *m);
 void mt_bss_presence(struct mt7932 *m, const struct mt7932_event *event);

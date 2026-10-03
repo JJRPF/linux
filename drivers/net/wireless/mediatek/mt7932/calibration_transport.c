@@ -45,13 +45,26 @@ fail:
 	return ret;
 }
 
+void mt_cal_input_error(struct mt7932 *m, int error, unsigned int tag, const char *stage)
+{
+	if (error == -ENOENT)
+		dev_err(&m->pdev->dev, "local input mediatek/mt7932/oca2.bin missing section 0x%04x during %s: %d\n",
+			tag, stage, error);
+	else if (tag)
+		dev_err(&m->pdev->dev, "local input mediatek/mt7932/oca2.bin section 0x%04x rejected during %s: %d\n",
+			tag, stage, error);
+	else
+		dev_err(&m->pdev->dev, "local input mediatek/mt7932/oca2.bin container/profile rejected during %s: %d\n",
+			stage, error);
+}
+
 int mt_calibration_gate(struct mt7932 *m)
 {
 	const struct firmware *wcal, *oca;
 	struct mt7932_cal_piece pieces[14];
 	u8 body[1028], request[16];
 	unsigned long flags;
-	unsigned int at, count, group;
+	unsigned int at, count, group, input_tag;
 	int ret, planned;
 
 	if (!m->six_ghz_valid || m->smart_version != 12 || !m->preload_version)
@@ -67,9 +80,10 @@ int mt_calibration_gate(struct mt7932 *m)
 		dev_err(&m->pdev->dev, "local input mediatek/mt7932/wcal.bin has invalid size %zu\n", wcal->size);
 		goto out;
 	}
-	planned = mt7932_cal_power_on(oca->data, oca->size, m->six_ghz, pieces);
+	planned = mt7932_cal_power_on(oca->data, oca->size, m->six_ghz, pieces, &input_tag);
 	if (planned < 0) {
 		ret = planned;
+		mt_cal_input_error(m, ret, input_tag, "power-on plan");
 		goto out;
 	}
 	/* Validate every potential PL request locally before changing firmware state. */
@@ -80,9 +94,11 @@ int mt_calibration_gate(struct mt7932 *m)
 
 		put_unaligned_le32(at, request + 12);
 		ret = mt7932_cal_requested(oca->data, oca->size, request, sizeof(request),
-					  m->smart_version, m->module_byte, check);
-		if (ret < 0)
+					  m->smart_version, m->module_byte, check, &input_tag);
+		if (ret < 0) {
+			mt_cal_input_error(m, ret, input_tag, "D7 plan");
 			goto out;
+		}
 	}
 	body[0] = 3;
 	body[1] = 0;
@@ -128,9 +144,11 @@ int mt_calibration_gate(struct mt7932 *m)
 		if (!count)
 			break;
 		ret = mt7932_cal_requested(oca->data, oca->size, request, sizeof(request),
-					  m->smart_version, m->module_byte, pieces);
-		if (ret < 0)
+					  m->smart_version, m->module_byte, pieces, &input_tag);
+		if (ret < 0) {
+			mt_cal_input_error(m, ret, input_tag, "D7 plan");
 			goto out;
+		}
 		ret = mt_cal_procedure(m, pieces, ret,
 				       mt7932_cal_request_replies(request), m->preload_version);
 		if (ret)

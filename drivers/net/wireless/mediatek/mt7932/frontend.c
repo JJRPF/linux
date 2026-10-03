@@ -480,7 +480,7 @@ static void mt_cal_work(struct work_struct *work)
 	struct mt7932_cal_piece pieces[7];
 	u8 request[16];
 	unsigned long flags;
-	unsigned int count;
+	unsigned int count, input_tag;
 	int ret;
 
 	mutex_lock(&m->command_mutex);
@@ -501,9 +501,11 @@ static void mt_cal_work(struct work_struct *work)
 		if (!count)
 			break;
 		ret = mt7932_cal_requested(oca->data, oca->size, request, sizeof(request),
-					  m->smart_version, m->module_byte, pieces);
-		if (ret < 0)
+					  m->smart_version, m->module_byte, pieces, &input_tag);
+		if (ret < 0) {
+			mt_cal_input_error(m, ret, input_tag, "runtime D7 plan");
 			break;
+		}
 		ret = mt_cal_procedure(m, pieces, ret,
 				       mt7932_cal_request_replies(request),
 				       m->preload_version);
