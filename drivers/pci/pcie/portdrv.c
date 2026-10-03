@@ -243,7 +243,7 @@ static int get_port_device_capability(struct pci_dev *dev)
 
 #ifdef CONFIG_PCIEAER
 	/* Error recovery may reset links and invalidate retained DMA ownership. */
-	if (!host->no_user_reset && (pci_pcie_type(dev) == PCI_EXP_TYPE_ROOT_PORT ||
+	if (!host->reset_sensitive && (pci_pcie_type(dev) == PCI_EXP_TYPE_ROOT_PORT ||
              pci_pcie_type(dev) == PCI_EXP_TYPE_RC_EC) &&
 	    dev->aer_cap && pci_aer_available() &&
 	    (pcie_ports_native || host->native_aer))
@@ -268,7 +268,7 @@ static int get_port_device_capability(struct pci_dev *dev)
 	 * With dpc-native, allow Linux to use DPC even if it doesn't have
 	 * permission to use AER.
 	 */
-	if (!host->no_user_reset &&
+	if (!host->reset_sensitive &&
 	    pci_find_ext_capability(dev, PCI_EXT_CAP_ID_DPC) &&
 	    pci_aer_available() &&
 	    (pcie_ports_dpc_native || (services & PCIE_PORT_SERVICE_AER)))

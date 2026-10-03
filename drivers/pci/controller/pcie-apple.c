@@ -2515,7 +2515,7 @@ static int apple_pcie_probe(struct platform_device *pdev)
 	/* Only this retained-DMA radio hierarchy forbids user reset/removal. */
 	if (piodma_supplier) {
 		bridge->no_user_remove = true;
-		bridge->no_user_reset = true;
+		bridge->reset_sensitive = true;
 		bridge->native_pcie_hotplug = false;
 		bridge->native_shpc_hotplug = false;
 	}

@@ -2170,9 +2170,9 @@ int vfio_pci_core_register_device(struct vfio_pci_core_device *vdev)
 	int ret;
 
 	/* Assignment exposes function/bus resets outside PCI sysfs. */
-	if (pci_find_host_bridge(pdev->bus)->no_user_reset) {
+	if (pci_find_host_bridge(pdev->bus)->reset_sensitive) {
 		dev_warn_ratelimited(dev,
-				     "VFIO assignment refused: host bridge forbids userspace reset\n");
+				     "VFIO assignment refused: host bridge retains reset-sensitive DMA\n");
 		return -EOPNOTSUPP;
 	}
 

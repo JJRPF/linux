@@ -137,7 +137,7 @@ void __noclone __crash_kexec(struct pt_regs *regs)
 	if (kexec_trylock()) {
 		if (!kexec_crash_image_allowed(!!kexec_crash_image)) {
 			if (kexec_crash_image)
-				pr_emerg("crash kexec refused permanently; first interlock: %s\n",
+				pr_emerg("crash kexec refused by active interlock; first reason: %s\n",
 					 kexec_block_reason());
 		} else {
 			struct pt_regs fixed_regs;

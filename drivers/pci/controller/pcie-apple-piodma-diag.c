@@ -57,7 +57,7 @@
 
 static bool enumerate = true;
 module_param(enumerate, bool, 0444);
-MODULE_PARM_DESC(enumerate, "Boot-time gate: prime and enumerate Neo radios (read-only, default on)");
+MODULE_PARM_DESC(enumerate, "Boot-time gate for J700/T8140 radios only (read-only, default on)");
 
 struct apple_piodma_request {
 	u16 offset;
@@ -165,7 +165,7 @@ static int apple_piodma_pm_notify(struct notifier_block *nb,
 	case PM_HIBERNATION_PREPARE:
 	case PM_RESTORE_PREPARE:
 		dev_warn_ratelimited(diag->dev,
-				     "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
+				     "sleep refused: Neo guard active during radio admission or retained DMA lifetime\n");
 		return notifier_from_errno(-EOPNOTSUPP);
 	default:
 		return NOTIFY_DONE;
@@ -185,7 +185,7 @@ static int apple_piodma_pm_prepare(struct device *dev)
 	 * to device PM, so retain a veto in the device prepare phase as well.
 	 */
 	dev_warn_ratelimited(dev,
-			     "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
+			     "sleep refused: Neo guard active during radio admission or retained DMA lifetime\n");
 	return -EOPNOTSUPP;
 }
 
@@ -803,7 +803,7 @@ static int apple_piodma_diag_probe(struct platform_device *pdev)
 	diag->dev = dev;
 	INIT_DELAYED_WORK(&diag->admission_retry, apple_piodma_retry_admission);
 	diag->kexec_blocker.reason =
-		"Neo radio bootstrap retains DMA memory until full hardware reset";
+		"Neo radio admission or retained DMA ownership";
 	for (i = 0; i < PIODMA_REQUEST_COUNT; i++)
 		init_completion(&diag->slots[i].event);
 	atomic_set(&diag->irq_count, 0);

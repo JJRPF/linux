@@ -103,7 +103,7 @@ int do_kexec_load(unsigned long entry, unsigned long nr_segments,
 	if (!kexec_trylock())
 		return -EBUSY;
 	if (nr_segments && kexec_blocked()) {
-		pr_warn_ratelimited("kexec load refused permanently; first interlock: %s\n",
+		pr_warn_ratelimited("kexec load refused by active interlock; first reason: %s\n",
 				    kexec_block_reason());
 		ret = -EOPNOTSUPP;
 		goto out_unlock;
