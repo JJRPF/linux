@@ -1560,6 +1560,7 @@ impl SepData {
         self.enrol_frames_accepted.store(0, Relaxed);
 
         if !self.bring_sensor_online() {
+            dev_err!(self.dev, "enrol: the sensor did not come back online\n");
             self.finish_enrolment(Err(ENROL_STATUS_SENSOR));
             let _ = sensor::idle();
             return;
@@ -2176,36 +2177,73 @@ impl SepData {
         false
     }
 
+    // Like verify, every exit that ends an enrolment says why: userspace sees
+    // only "driver status 0x1", which cannot tell these apart.
     fn enrol_one_image(&self, counter: u32) -> ImageOutcome {
-        if sensor::start_capture().is_err() {
+        if let Err(e) = sensor::start_capture() {
+            dev_err!(self.dev, "enrol: could not start capture {} ({:?})\n", counter, e);
             return ImageOutcome::Failed(ENROL_STATUS_SENSOR);
         }
 
         let available = match self.await_capture() {
             CaptureWait::Ready(n) => n,
-            CaptureWait::Timeout => return ImageOutcome::NoFinger,
-            CaptureWait::Fault(_) => {
+            CaptureWait::Timeout => {
+                dev_warn!(self.dev, "enrol: capture {} ended without a frame\n", counter);
+                return ImageOutcome::NoFinger;
+            }
+            CaptureWait::Fault(state) => {
+                dev_err!(
+                    self.dev,
+                    "enrol: the sensor fell to state {} during capture {}\n",
+                    state,
+                    counter
+                );
                 return ImageOutcome::Failed(ENROL_STATUS_SENSOR);
             }
-            CaptureWait::Abandon => return ImageOutcome::Failed(ENROL_STATUS_SENSOR),
+            CaptureWait::Abandon => {
+                // A cancelled enrolment also abandons; only a live one is a fault.
+                if bio::enrol_is_live(&self.bio_session.lock()) {
+                    dev_err!(
+                        self.dev,
+                        "enrol: the sensor status became unreadable during capture {}\n",
+                        counter
+                    );
+                }
+                return ImageOutcome::Failed(ENROL_STATUS_SENSOR);
+            }
         };
 
         let capture = match sensor::read_capture(available) {
             Ok(c) => c,
             Err(sensor::CaptureError::Checksum {
-                advertised: _advertised,
-                computed: _computed,
+                advertised: sent,
+                computed,
             }) => {
+                dev_warn!(
+                    self.dev,
+                    "enrol: capture {} frame checksum mismatch (sensor sent {:#06x}, computed {:#06x}); retrying\n",
+                    counter,
+                    sent,
+                    computed
+                );
                 return ImageOutcome::Retry;
             }
-            Err(sensor::CaptureError::Length(_n)) => {
+            Err(sensor::CaptureError::Length(n)) => {
+                dev_warn!(
+                    self.dev,
+                    "enrol: capture {} advertised an unusable frame length {}; retrying\n",
+                    counter,
+                    n
+                );
                 return ImageOutcome::Retry;
             }
-            Err(sensor::CaptureError::Bus(_e)) => {
+            Err(sensor::CaptureError::Bus(e)) => {
+                dev_err!(self.dev, "enrol: reading the frame of capture {} failed ({:?})\n", counter, e);
                 return ImageOutcome::Failed(ENROL_STATUS_SENSOR);
             }
             Err(sensor::CaptureError::NoMemory) => {
-                return ImageOutcome::Failed(ENROL_STATUS_SENSOR)
+                dev_err!(self.dev, "enrol: no memory for the frame of capture {}\n", counter);
+                return ImageOutcome::Failed(ENROL_STATUS_SENSOR);
             }
         };
 
