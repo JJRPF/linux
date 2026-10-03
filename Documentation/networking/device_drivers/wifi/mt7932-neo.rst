@@ -16,21 +16,30 @@ Platform and configuration
 --------------------------
 
 Use the separately reviewed T8140 PCIe bootstrap described in
-``Documentation/PCI/controller/apple-t8140.rst``. Its explicit kernel opt-in is
-``pcie_apple_piodma_diag.enumerate=1``. Public m1n1 must populate the J700
-``wifi0`` endpoint's own ``local-mac-address``; a zero placeholder is rejected.
+``Documentation/PCI/controller/apple-t8140.rst``. Enumeration is enabled by
+default only on the J700/T8140; ``pcie_apple_piodma_diag.enumerate=0`` disables
+it. Public m1n1 must populate the J700 ``wifi0`` endpoint's own
+``local-mac-address``; a zero placeholder is rejected.
 
-The tested configuration includes ``CONFIG_MT7932_FULLMAC=m``,
+The original hardware-tested configuration included ``CONFIG_MT7932_FULLMAC=m``,
 ``CONFIG_CFG80211=y``, ``CONFIG_BT_MTK7932_PCIE=y``, ``CONFIG_BT_BREDR=y``,
 ``CONFIG_BT_LE=y``, ``CONFIG_CRYPTO_AES=y`` and ``CONFIG_CRYPTO_CMAC=y``.
-The bootstrap and Bluetooth experiment exclude suspend and kexec.
+The shared build supports ``CONFIG_PCIE_APPLE=m``,
+``CONFIG_PCIE_APPLE_PIODMA_DIAG=y``, ``CONFIG_PCIEASPM=y``,
+``CONFIG_MT7932_FULLMAC=m`` and ``CONFIG_BT_MTK7932_PCIE=m`` with modular
+Bluetooth/rfkill and sleep/kexec enabled. The active J700 supplier refuses sleep
+and kexec at runtime while its arena is retained; other Macs keep their normal
+behavior. Firmware loading is selected by both radio drivers. This shared
+build still requires physical Neo qualification.
+
 Use the ordinary cfg80211 regulatory database and applicable country policy.
 The validated first-admission fallback is kernel country 00 with firmware XZ.
 
-After the root filesystem and the local firmware packages are available,
-select PCIe ASPM performance policy before loading ``mt7932-fullmac``. This
-matches the tested admission sequence. Bluetooth's gate defaults closed;
-validate the cold, unbound ``14c3:793b`` function, enable
+The host now disables link power states on the two radio endpoints before
+driver binding; no global PCIe ASPM performance policy is required. Load
+``mt7932-fullmac`` after the root filesystem and local firmware packages are
+available. Bluetooth's gate defaults closed; load ``mt7932_bt_pcie`` with the
+default ``enable=0``, validate the cold, unbound ``14c3:793b`` function, enable
 ``/sys/module/mt7932_bt_pcie/parameters/enable``, then request its PCI probe.
 Do not reprobe after a failed or uncertain Bluetooth admission. The tested
 Wi-Fi driver owns function 0 and Bluetooth owns function 1.
@@ -88,11 +97,14 @@ samples and response hashes, omitting network names, addresses and credentials.
 Limitations
 -----------
 
-* PCI bootstrap memory remains retained until external reset. Controller
-  removal, memory reuse, suspend and kexec are unqualified.
+* PCI bootstrap memory remains retained until external reset. Sleep and kexec
+  are refused while it is retained; they are not hardware-qualified on the Neo.
+  Controller removal and memory reuse remain unqualified.
 * Bluetooth PCI removal/quiescence is incomplete. Its software queue limit
   does not provide HCI backpressure; saturation can drop an accounted frame.
-  Both require correction before production use.
+  Both require correction before production use. An activated Bluetooth module
+  cannot be unloaded; PCI removal only retires software callbacks and does not
+  establish DMA quiescence or release retained ownership.
 * Arbitrary scan IEs, WPA3/SAE, required MFP, AP/P2P, general country-package
   generation, roaming and long-duration reliability are unqualified.
 * SCO/headset microphone, LE Audio/ISO and simultaneous headset audio are

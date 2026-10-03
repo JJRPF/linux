@@ -4,7 +4,7 @@
  * protocol contracts and public Linux interfaces. Original transport research:
  * DJ (DjDeveloperr), Ace (Acelogic), and Ryan Murray.
  *
- * The built-in driver retains every device-visible allocation after mastering
+ * The driver retains every device-visible allocation after mastering
  * is enabled, including all terminal failures. No unbind, retry, suspend or
  * quiescence claim is made. Firmware and board inputs are supplied locally.
  */
@@ -19,6 +19,7 @@
 #include <linux/of.h>
 #include <linux/overflow.h>
 #include <linux/pci.h>
+#include <linux/pci-apple-piodma.h>
 #include <linux/pm_runtime.h>
 #include <linux/skbuff.h>
 #include <linux/slab.h>
@@ -1087,9 +1088,22 @@ static int bt7932_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		goto fail;
 	bt->irq_requested = true;
+	/* The retained supplier owns the runtime suspend/kexec interlock. */
+	ret = apple_piodma_radio_check(pdev);
+	if (ret)
+		goto fail;
+	/* Refuse publication if an unload was already committed. */
+	if (!try_module_get(THIS_MODULE)) {
+		ret = -ENODEV;
+		goto fail;
+	}
 	pci_set_drvdata(pdev, bt);
 	pm_runtime_forbid(&pdev->dev);
-	/* Every later outcome stays bound and retains all published ownership. */
+	/*
+	 * Every later outcome retains published DMA and its device/module owners,
+	 * including the IRQ and HCI callbacks. Only external reset ends ownership.
+	 */
+	pci_dev_get(pdev);
 	bt->retained = true;
 	pci_set_master(pdev);
 	ret = bt7932_download(bt);
@@ -1124,12 +1138,29 @@ static void bt7932_shutdown(struct pci_dev *pdev)
 	struct bt7932 *bt = pci_get_drvdata(pdev);
 
 	WRITE_ONCE(bt->opened, false);
-	wake_up_all(&bt->wake_wait);
-	cancel_work_sync(&bt->tx_work);
-	skb_queue_purge(&bt->tx_queue);
 	mutex_lock(&bt->lock);
 	bt7932_fault_locked(bt, "shutdown retains DMA until external reset");
 	mutex_unlock(&bt->lock);
+	/* fault_locked disables without synchronizing while holding bt->lock. */
+	synchronize_irq(bt->irq);
+	cancel_work_sync(&bt->tx_work);
+	skb_queue_purge(&bt->tx_queue);
+}
+
+static void bt7932_remove(struct pci_dev *pdev)
+{
+	struct bt7932 *bt = pci_get_drvdata(pdev);
+
+	/* Removal cannot establish DMA quiescence or release retained ownership. */
+	bt7932_shutdown(pdev);
+	if (bt->registered) {
+		hci_unregister_dev(bt->hdev);
+		bt->registered = false;
+	}
+	/* Flush again after the last HCI callback has been retired. */
+	cancel_work_sync(&bt->tx_work);
+	skb_queue_purge(&bt->tx_queue);
+	dev_err(&pdev->dev, "removal is unqualified; DMA, device and module retained until external reset\n");
 }
 
 static const struct pci_device_id bt7932_ids[] = {
@@ -1142,6 +1173,7 @@ static struct pci_driver bt7932_driver = {
 	.name = "mt7932_bt_pcie",
 	.id_table = bt7932_ids,
 	.probe = bt7932_probe,
+	.remove = bt7932_remove,
 	.shutdown = bt7932_shutdown,
 	.driver = {
 		.suppress_bind_attrs = true,
