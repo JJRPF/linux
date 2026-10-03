@@ -41,10 +41,13 @@ drivers. This prevents a later generic rescan from enabling cached children of
 a failed admission. Each radio probe reapplies the link-power restriction, so
 a recreated ASPM link state cannot inherit an incompatible global policy.
 
-The PIODMA arena remains allocated until external reset. Controller removal,
-teardown, memory reuse and arbitrary downstream devices are unqualified.
-The host and activated Bluetooth modules are pinned until reset. Do not remove
-the controller, radio PCI devices or their IOMMUs while this experiment is active.
+The PIODMA arena remains allocated until external reset. Standard PCI sysfs
+``remove`` writes for the root port and radio functions return ``-EBUSY``
+while the host has its retained supplier; the removal attributes remain present.
+The host and activated Bluetooth modules are pinned until reset. Arbitrary
+platform-device removal, IOMMU teardown, forced module removal, memory reuse
+and arbitrary downstream devices remain unqualified. Do not remove the
+controller or its IOMMUs while this experiment is active.
 These lifecycle contracts require further work before production support.
 
 J700's ``wifi0`` alias and PCI endpoint node allow the public bootloader to

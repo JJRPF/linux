@@ -2512,6 +2512,8 @@ static int apple_pcie_probe(struct platform_device *pdev)
 	pcie->dev = dev;
 	pcie->hw = hw;
 	pcie->piodma_supplier = piodma_supplier;
+	/* A retained supplier forbids manual removal of its root or radios. */
+	bridge->no_user_remove = !!piodma_supplier;
 	if (hw->root_bus_only)
 		dev_info(dev, "root-port probe only; downstream config is blocked\n");
 	pcie->base = devm_platform_ioremap_resource(pdev, 1);

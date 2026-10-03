@@ -29,6 +29,16 @@ menuconfig PCI
 
 if PCI
 
+config PCI_SYSFS_KUNIT_TEST
+	bool "Unit tests for PCI sysfs removal restrictions" if !KUNIT_ALL_TESTS
+	depends on SYSFS && KUNIT=y
+	default KUNIT_ALL_TESTS
+	help
+	  Test rejected removal writes for root ports and children under a host
+	  that prohibits userspace removal, plus malformed and no-op writes.
+	  The tests use an unregistered synthetic hierarchy and never remove
+	  a real PCI device or invoke kernfs attribute removal.
+
 config PCI_DOMAINS
 	bool
 

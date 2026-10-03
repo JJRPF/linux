@@ -99,12 +99,13 @@ Limitations
 
 * PCI bootstrap memory remains retained until external reset. Sleep and kexec
   are refused while it is retained; they are not hardware-qualified on the Neo.
-  Controller removal and memory reuse remain unqualified.
+  Standard PCI sysfs removal of the root and radio functions is refused;
+  arbitrary controller/IOMMU teardown and memory reuse remain unqualified.
 * Bluetooth PCI removal/quiescence is incomplete. Its software queue limit
   does not provide HCI backpressure; saturation can drop an accounted frame.
   Both require correction before production use. An activated Bluetooth module
-  cannot be unloaded; PCI removal only retires software callbacks and does not
-  establish DMA quiescence or release retained ownership.
+  cannot be unloaded normally; forced PCI removal only retires software
+  callbacks and does not establish DMA quiescence or release retained ownership.
 * Arbitrary scan IEs, WPA3/SAE, required MFP, AP/P2P, general country-package
   generation, roaming and long-duration reliability are unqualified.
 * SCO/headset microphone, LE Audio/ISO and simultaneous headset audio are
