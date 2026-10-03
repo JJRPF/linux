@@ -135,7 +135,9 @@ void __noclone __crash_kexec(struct pt_regs *regs)
 	 * sufficient.  But since I reuse the memory...
 	 */
 	if (kexec_trylock()) {
-		if (kexec_crash_image && !kexec_blocked()) {
+		if (kexec_crash_image && kexec_blocked()) {
+			pr_emerg("crash kexec refused: a device retains memory until hardware reset\n");
+		} else if (kexec_crash_image) {
 			struct pt_regs fixed_regs;
 
 			crash_setup_regs(&fixed_regs, regs);
