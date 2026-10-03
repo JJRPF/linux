@@ -64,6 +64,10 @@ while the host has its retained supplier; the removal attributes remain present.
 The same hierarchy refuses userspace ``reset`` and ``reset_subordinate``
 writes, and its host does not hand native PCIe or SHPC slot hot-plug control
 to Linux. These restrictions leave other PCI hosts unchanged.
+VFIO assignment is refused on this host because it exposes reset operations
+outside PCI sysfs. Automatic native AER/DPC port recovery is also withheld:
+its bus or link reset has no qualified retained-memory contract here. A hardware
+fault requires external reset rather than guessed recovery.
 The host and activated Bluetooth modules are pinned until reset. Arbitrary
 platform-device removal, IOMMU teardown, forced module removal, memory reuse
 and arbitrary downstream devices remain unqualified. Do not remove the
