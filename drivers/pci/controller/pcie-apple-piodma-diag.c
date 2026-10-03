@@ -143,6 +143,26 @@ static int apple_piodma_pm_notify(struct notifier_block *nb,
 	}
 }
 
+static int apple_piodma_pm_prepare(struct device *dev)
+{
+	struct apple_piodma_diag *diag = dev_get_drvdata(dev);
+
+	if (!diag || !diag->arena)
+		return 0;
+	/*
+	 * A /dev/snapshot file may have sent its PREPARE notifier before this
+	 * supplier probed. Its later image/restore/suspend ioctls go straight
+	 * to device PM, so retain a veto in the device prepare phase as well.
+	 */
+	dev_warn(dev,
+		 "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
+	return -EBUSY;
+}
+
+static const struct dev_pm_ops apple_piodma_pm_ops = {
+	.prepare = apple_piodma_pm_prepare,
+};
+
 static int apple_piodma_diag_root(struct apple_piodma_diag *diag, struct pci_dev *root)
 {
 	int ret;
@@ -715,6 +735,7 @@ static struct platform_driver apple_piodma_diag_driver = {
 	.driver = {
 		.name = "apple-piodma-diag",
 		.of_match_table = apple_piodma_diag_match,
+		.pm = pm_sleep_ptr(&apple_piodma_pm_ops),
 		.suppress_bind_attrs = true,
 	},
 };

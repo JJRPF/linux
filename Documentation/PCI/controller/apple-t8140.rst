@@ -16,7 +16,10 @@ diagnostic path closed, pass ``pcie_apple_piodma_diag.enumerate=0``.
 
 The shared kernel can keep suspend, hibernation and kexec support enabled.
 Once the supplier retains its arena, a PM notifier refuses sleep transitions
-and a kexec interlock refuses loading or executing a replacement kernel,
+and its device prepare callback provides a second veto. This also covers
+``/dev/snapshot`` files opened before the supplier probes: later image, restore
+and suspend ioctls enter device PM without repeating the prepare notifier.
+A kexec interlock refuses loading or executing a replacement kernel,
 including an already loaded crash kernel. Image unloading remains permitted.
 These interlocks apply only to the active J700 supplier; other machines do not
 acquire them. A successful supplier probe retains this protection even if later
