@@ -1,10 +1,11 @@
 .. SPDX-License-Identifier: GPL-2.0-only
 
 MT7932 radio bring-up on the MacBook Neo
-======================================
+========================================
 
 J700 MT7932 Wi-Fi uses cfg80211 and NetworkManager with firmware-managed
-WPA2-CCMP authentication. Bluetooth uses an opt-in PCIe transport.
+WPA2-CCMP authentication or open networks. Bluetooth uses an opt-in PCIe
+transport and remains disabled by default pending physical qualification.
 
 The Wi-Fi import is pinned to
 ``aurora-silicon/linux-neo-cleanroom-eryk-with-wifi``, commit
@@ -24,10 +25,10 @@ it. Public m1n1 must populate the J700 ``wifi0`` endpoint's own
 The original hardware-tested configuration included ``CONFIG_MT7932_FULLMAC=m``,
 ``CONFIG_CFG80211=y``, ``CONFIG_BT_MTK7932_PCIE=y``, ``CONFIG_BT_BREDR=y``,
 ``CONFIG_BT_LE=y``, ``CONFIG_CRYPTO_AES=y`` and ``CONFIG_CRYPTO_CMAC=y``.
-The shared build supports ``CONFIG_PCIE_APPLE=m``,
+The shared build supports ``CONFIG_PCIE_APPLE=y`` or ``m``,
 ``CONFIG_PCIE_APPLE_PIODMA_DIAG=y``, ``CONFIG_PCIEASPM=y``,
 ``CONFIG_MT7932_FULLMAC=m`` and ``CONFIG_BT_MTK7932_PCIE=m`` with modular
-Bluetooth/rfkill and sleep/kexec enabled. The active J700 supplier refuses sleep
+Bluetooth/rfkill and sleep/kexec enabled. The active J700 bootstrap refuses sleep
 and kexec at runtime while its arena is retained; other Macs keep their normal
 behavior. Firmware loading is selected by both radio drivers. This shared
 build still requires physical Neo qualification.
@@ -47,7 +48,19 @@ driver binding; no global PCIe ASPM performance policy is required. Load
 ``mt7932-fullmac`` after the root filesystem and local firmware packages are
 available. Bluetooth's gate defaults closed; load ``mt7932_bt_pcie`` with the
 default ``enable=0``, validate the cold, unbound ``14c3:793b`` function, enable
-``/sys/module/mt7932_bt_pcie/parameters/enable``, then request its PCI probe.
+``/sys/module/mt7932_bt_pcie/parameters/enable``, then request its PCI probe::
+
+  echo 1 > /sys/module/mt7932_bt_pcie/parameters/enable
+  echo YOUR_BT_PCI_BDF > /sys/bus/pci/drivers_probe
+
+Use the actual ``14c3:793b`` PCI address for ``YOUR_BT_PCI_BDF``. The driver
+suppresses its individual bind/unbind attributes, so there is no driver
+``bind`` file. For an intentionally enabled cold boot, a file under
+``/etc/modprobe.d/`` may instead contain::
+
+  options mt7932_bt_pcie enable=1
+
+Install the target unit's Bluetooth inputs before opening the gate.
 Do not reprobe after a failed or uncertain Bluetooth admission. The tested
 Wi-Fi driver owns function 0 and Bluetooth owns function 1.
 
@@ -71,9 +84,11 @@ Wi-Fi requests the following files under ``mediatek/mt7932/``:
   its original BLOB container.
 * ``config-original.bin``: the bounded J7CF package with the original 64 or
   65 configuration records, including all required keys.
-* ``policy/world-XZ.bin`` and, when available, the matching country package
-  under ``policy/``: J7RP containers with original-derived modes and power
-  tables. Relabeling a different country's payload is unsupported.
+* ``policy/world-XZ.bin`` for cfg80211 country 00, or ``policy/<CC>.bin`` for
+  the matching explicit uppercase country code: J7RP containers with
+  original-derived modes and power tables. A country package is mandatory
+  whenever that country is set; there is no fallback to the world package.
+  Relabeling a different country's payload is unsupported.
 
 Bluetooth requests these files under ``mediatek/``:
 
@@ -85,7 +100,8 @@ Bluetooth requests these files under ``mediatek/``:
 * ``j700-mt7932-btcal.bin`` (the measured input is 388 bytes; the driver accepts
   nonempty inputs up to 65535 bytes and relies on HCI setup acceptance);
 * ``MT7932_PTB_IzubaA_0.1.0.0_20251021141303.ptx`` (198 bytes);
-* ``j700-mt7932-bdaddr.bin`` (the unit's six-byte Bluetooth address).
+* ``j700-mt7932-bdaddr.bin`` (the unit's six-byte Bluetooth address,
+  most-significant byte first; the driver converts it to HCI byte order).
 
 Extraction and packaging require the original local assets. Keep these
 assets and unit identities out of commits and public test reports.
@@ -96,12 +112,20 @@ it requests ``oca2.bin`` again for runtime D7 requests and each association.
 unconverted source files to those names does not satisfy the format checks.
 
 Load the radio drivers after these inputs are available on the real root.
-An early Wi-Fi probe already owns DMA before it requests firmware. Only an
-explicit ``initialization failed; DMA retired`` message confirms that its
-checked reset completed and the unbound driver can be loaded again. A failed
-reset retains the binding and DMA; do not reprobe it. Use a full external reset
-after a failed or uncertain admission. Installing a missing startup calibration
-file does not clear a terminal RF failure in an already bound epoch.
+There are three distinct Wi-Fi failure classes:
+
+* An initialization probe failure can occur after DMA is published but before
+  an interface is registered. Only ``initialization failed; DMA retired``
+  confirms that the checked reset completed and the unbound driver may be
+  loaded again. A failed
+  reset retains the binding and DMA; do not reprobe it.
+* ``REGULATORY_BLOCKED`` with ``error=-2`` and ``recovery-required=0`` means
+  the requested policy file is absent before policy submission. Install that
+  exact file and bring the interface up or retry a scan/connection. An identical
+  ``iw reg set`` request alone does not trigger a retry in cfg80211.
+* ``recovery-required=1`` or ``RF_FAILED`` is a latched startup/calibration
+  failure. Installing a file does not clear it in the bound epoch. A full
+  external reset is required after a failed or uncertain admission.
 
 Repeatable physical network test
 --------------------------------
@@ -121,17 +145,34 @@ samples and response hashes, omitting network names, addresses and credentials.
 Limitations
 -----------
 
+* Wi-Fi station operation is limited to 2.4 GHz channels 1--13 and 5 GHz
+  channels 36, 40, 44 and 48, subject to the applicable regulatory rules.
+  5 GHz supports 20/40/80 MHz channel layouts within this range. Channels
+  149--165 and 6 GHz are not exposed. Authentication supports open networks
+  and WPA2-PSK with CCMP; WPA3/SAE, 802.1X, required MFP and other ciphers
+  are unsupported. AP/P2P and roaming are unsupported.
+* Sleep is not supported on the MacBook Neo yet. With radio support active
+  (the default), the retained bootstrap makes the kernel refuse suspend:
+  lid close and ``systemctl suspend`` do not put it to sleep. Shut down before
+  putting it in a bag. Booting with ``pcie_apple_piodma_diag.enumerate=0``
+  removes this refusal and disables Wi-Fi and Bluetooth; sleep and wake are
+  still unproven on this hardware without the radios.
 * PCI bootstrap memory remains retained until external reset. Sleep and kexec
   are refused while it is retained; they are not hardware-qualified on the Neo.
   Standard PCI sysfs removal of the root and radio functions is refused;
   arbitrary controller/IOMMU teardown and memory reuse remain unqualified.
   Wi-Fi shutdown joins host producers before disabling bus mastering and
   retains device-visible memory until reset.
+  Userspace PCI ``reset`` and ``reset_subordinate`` are also refused, and
+  native slot hot-plug is disabled for this host. Per-link sysfs ASPM/Clock PM
+  writes can lift the power-state restrictions; they are reapplied only at
+  probe. Do not enable those link power states while the radios are active.
 * Bluetooth PCI removal/quiescence is incomplete. Its software queue limit
   does not provide HCI backpressure; saturation can drop an accounted frame.
   Both require correction before production use. An activated Bluetooth module
   cannot be unloaded normally; forced PCI removal only retires software
-  callbacks and does not establish DMA quiescence or release retained ownership.
+  callbacks, including the threaded IRQ and MSI vectors, and does not establish
+  DMA quiescence or release retained ownership.
 * Arbitrary scan IEs, WPA3/SAE, required MFP, AP/P2P, general country-package
   generation, roaming and long-duration reliability are unqualified.
 * SCO/headset microphone, LE Audio/ISO and simultaneous headset audio are

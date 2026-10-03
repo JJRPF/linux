@@ -1,7 +1,7 @@
 .. SPDX-License-Identifier: GPL-2.0-only
 
 T8140/J700 experimental radio PCIe bootstrap
-==========================================
+============================================
 
 The J700 path trains port 0, validates a bounded PIODMA bootstrap request,
 and enables native ECAM for the MediaTek Wi-Fi and Bluetooth functions.
@@ -13,18 +13,32 @@ The bootstrap enables enumeration by default only on machines matching both
 ``apple,j700`` and ``apple,t8140``, through the matching diagnostic and host
 device-tree nodes. No kernel argument is required. To leave the root-only
 diagnostic path closed, pass ``pcie_apple_piodma_diag.enumerate=0``.
+The read-only ``enumerate`` parameter reports the configured admission request,
+not whether the current machine is a Neo or its radios were admitted. Its
+default value is also visible on other Macs; the machine and DT checks decide
+whether it has any effect.
 
 The shared kernel can keep suspend, hibernation and kexec support enabled.
-Once the supplier retains its arena, a PM notifier refuses sleep transitions
+Immediately before the bootstrap first exposes its arena to hardware, a PM
+notifier refuses sleep transitions
 and its device prepare callback provides a second veto. This also covers
 ``/dev/snapshot`` files opened before the supplier probes: later image, restore
 and suspend ioctls enter device PM without repeating the prepare notifier.
 A kexec interlock refuses loading or executing a replacement kernel,
 including an already loaded crash kernel. Image unloading remains permitted.
-These interlocks apply only to the active J700 supplier; other machines do not
-acquire them. A successful supplier probe retains this protection even if later
-radio enumeration fails. Failed or uncertain bootstrap state requires a full
-external hardware reset; there is no command retry.
+These interlocks apply only to the active J700 bootstrap; other machines do not
+acquire them. Merely probing its supplier does not block transitions. Once the
+bootstrap retains memory, the protection persists even if enumeration or either
+radio's firmware loading fails. Thus the block applies on every default J700
+boot which reaches retained radio admission, regardless of installed firmware.
+Failed or uncertain bootstrap state requires a full external hardware reset;
+there is no command retry.
+
+Sleep is not supported on the MacBook Neo yet. With radio support active
+(the default), the kernel refuses suspend: lid close and ``systemctl suspend``
+do not put it to sleep. Shut down before putting it in a bag. Booting with
+``pcie_apple_piodma_diag.enumerate=0`` removes this refusal and disables Wi-Fi
+and Bluetooth; sleep and wake remain unproven on this hardware without radios.
 
 Before either radio driver can bind, the host disables ASPM, all L1 substates
 and Clock PM on the validated radio endpoints' shared PCIe link through the
@@ -40,10 +54,16 @@ the host's downstream device-enable callback enforces the same gate for other
 drivers. This prevents a later generic rescan from enabling cached children of
 a failed admission. Each radio probe reapplies the link-power restriction, so
 a recreated ASPM link state cannot inherit an incompatible global policy.
+Privileged writes to the per-link PCI sysfs ASPM or Clock PM attributes can
+override the restriction; it is reapplied only at probe, not continuously.
+Do not enable those link power states while the Neo radios are admitted.
 
 The PIODMA arena remains allocated until external reset. Standard PCI sysfs
 ``remove`` writes for the root port and radio functions return ``-EBUSY``
 while the host has its retained supplier; the removal attributes remain present.
+The same hierarchy refuses userspace ``reset`` and ``reset_subordinate``
+writes, and its host does not hand native PCIe or SHPC slot hot-plug control
+to Linux. These restrictions leave other PCI hosts unchanged.
 The host and activated Bluetooth modules are pinned until reset. Arbitrary
 platform-device removal, IOMMU teardown, forced module removal, memory reuse
 and arbitrary downstream devices remain unqualified. Do not remove the
