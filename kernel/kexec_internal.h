@@ -23,6 +23,21 @@ int kimage_is_destination_range(struct kimage *image,
 extern atomic_t __kexec_lock;
 bool kexec_blocked(void);
 const char *kexec_block_reason(void);
+/* Caller holds the existing NMI-safe kexec lock; no image is dereferenced. */
+static inline bool kexec_crash_image_allowed(bool image_loaded)
+{
+	return image_loaded && !kexec_blocked();
+}
+
+#ifdef CONFIG_KEXEC
+int do_kexec_load(unsigned long entry, unsigned long nr_segments,
+		  struct kexec_segment *segments, unsigned long flags);
+#endif
+#ifdef CONFIG_KEXEC_FILE
+int do_kexec_file_load(int kernel_fd, int initrd_fd, unsigned long cmdline_len,
+		       const char __user *cmdline_ptr, unsigned long flags);
+#endif
+
 static inline bool kexec_trylock(void)
 {
 	int old = 0;

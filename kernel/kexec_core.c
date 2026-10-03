@@ -1205,8 +1205,8 @@ int kernel_kexec(void)
 	if (!kexec_trylock())
 		return -EBUSY;
 	if (kexec_blocked()) {
-		pr_warn("kexec refused permanently; first interlock: %s\n",
-			kexec_block_reason());
+		pr_warn_ratelimited("kexec refused permanently; first interlock: %s\n",
+				    kexec_block_reason());
 		kexec_unlock();
 		return -EOPNOTSUPP;
 	}

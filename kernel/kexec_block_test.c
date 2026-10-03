@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <kunit/test.h>
 #include <linux/errno.h>
-#include <linux/module.h>
 
 #include "kexec_internal.h"
 
@@ -120,11 +119,92 @@ static void kexec_block_execution_test(struct kunit *test)
 	kexec_test_release(test);
 }
 
+static void kexec_test_require_empty_images(struct kunit *test)
+{
+	bool loaded;
+
+	KUNIT_ASSERT_TRUE(test, kexec_trylock());
+	loaded = kexec_image || kexec_crash_image;
+	kexec_unlock();
+	/* The test guard prevents new loads; never unload a real image. */
+	if (loaded)
+		kunit_skip(test, "a normal or crash image is already loaded");
+}
+
+#ifdef CONFIG_KEXEC
+static void kexec_block_legacy_load_test(struct kunit *test)
+{
+	/* Bad alignment also makes a missing guard fail safely in validation. */
+	struct kexec_segment segment = { .mem = 1, .memsz = PAGE_SIZE };
+
+	kexec_test_acquire(test);
+	kexec_test_require_empty_images(test);
+	KUNIT_EXPECT_EQ(test, do_kexec_load(0, 1, &segment, 0), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, do_kexec_load(0, 1, &segment, KEXEC_ON_CRASH),
+			-EOPNOTSUPP);
+	/* Unload an empty slot through the actual loader while still blocked. */
+	KUNIT_EXPECT_EQ(test, do_kexec_load(0, 0, NULL, 0), 0);
+	KUNIT_EXPECT_EQ(test, do_kexec_load(0, 0, NULL, KEXEC_ON_CRASH), 0);
+	kexec_test_release(test);
+}
+#endif
+
+#ifdef CONFIG_KEXEC_FILE
+static void kexec_block_file_load_test(struct kunit *test)
+{
+	int ret;
+
+	kexec_test_acquire(test);
+	kexec_test_require_empty_images(test);
+	/* Invalid fds cannot create an image even if the veto regresses. */
+	ret = do_kexec_file_load(-1, -1, 0, NULL, 0);
+	if (ret == -EPERM)
+		kunit_skip(test, "file loads disabled by permissions or attempt limit");
+	KUNIT_EXPECT_EQ(test, ret, -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test,
+			do_kexec_file_load(-1, -1, 0, NULL, KEXEC_FILE_ON_CRASH),
+			-EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, do_kexec_file_load(-1, -1, 0, NULL, KEXEC_FILE_UNLOAD), 0);
+	KUNIT_EXPECT_EQ(test,
+			do_kexec_file_load(-1, -1, 0, NULL,
+					   KEXEC_FILE_UNLOAD | KEXEC_FILE_ON_CRASH), 0);
+	kexec_test_release(test);
+}
+#endif
+
+static void kexec_block_crash_policy_test(struct kunit *test)
+{
+	bool empty_allowed, loaded_allowed;
+
+	kexec_test_acquire(test);
+	KUNIT_ASSERT_TRUE(test, kexec_trylock());
+	/* Exercise the real crash selector without installing any fake image. */
+	empty_allowed = kexec_crash_image_allowed(false);
+	loaded_allowed = kexec_crash_image_allowed(true);
+	kexec_unlock();
+	KUNIT_EXPECT_FALSE(test, empty_allowed);
+	KUNIT_EXPECT_FALSE(test, loaded_allowed);
+	kexec_test_release(test);
+	KUNIT_ASSERT_TRUE(test, kexec_trylock());
+	empty_allowed = kexec_crash_image_allowed(false);
+	loaded_allowed = kexec_crash_image_allowed(true);
+	kexec_unlock();
+	KUNIT_EXPECT_FALSE(test, empty_allowed);
+	KUNIT_EXPECT_TRUE(test, loaded_allowed);
+}
+
 static struct kunit_case kexec_block_test_cases[] = {
 	KUNIT_CASE(kexec_block_balanced_test),
 	KUNIT_CASE(kexec_block_nested_test),
 	KUNIT_CASE(kexec_block_busy_test),
 	KUNIT_CASE(kexec_block_execution_test),
+#ifdef CONFIG_KEXEC
+	KUNIT_CASE(kexec_block_legacy_load_test),
+#endif
+#ifdef CONFIG_KEXEC_FILE
+	KUNIT_CASE(kexec_block_file_load_test),
+#endif
+	KUNIT_CASE(kexec_block_crash_policy_test),
 	{}
 };
 
@@ -135,5 +215,3 @@ static struct kunit_suite kexec_block_test_suite = {
 };
 
 kunit_test_suite(kexec_block_test_suite);
-
-MODULE_LICENSE("GPL");

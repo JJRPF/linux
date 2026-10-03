@@ -160,8 +160,8 @@ static int apple_piodma_pm_notify(struct notifier_block *nb,
 	case PM_SUSPEND_PREPARE:
 	case PM_HIBERNATION_PREPARE:
 	case PM_RESTORE_PREPARE:
-		dev_warn(diag->dev,
-			 "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
+		dev_warn_ratelimited(diag->dev,
+				     "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
 		return notifier_from_errno(-EOPNOTSUPP);
 	default:
 		return NOTIFY_DONE;
@@ -180,8 +180,8 @@ static int apple_piodma_pm_prepare(struct device *dev)
 	 * supplier probed. Its later image/restore/suspend ioctls go straight
 	 * to device PM, so retain a veto in the device prepare phase as well.
 	 */
-	dev_warn(dev,
-		 "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
+	dev_warn_ratelimited(dev,
+			     "sleep refused: Neo radio bootstrap retains DMA memory until full hardware reset\n");
 	return -EOPNOTSUPP;
 }
 
