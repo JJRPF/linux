@@ -7,6 +7,7 @@ Run once per named attempt. Output contains no credentials or unit addresses.
 The saved NetworkManager profile supplies credentials on the target only.
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import ipaddress
 import json
@@ -21,7 +22,8 @@ import time
 fault = re.compile(r'translation fault|stale exception latched|Kernel panic|Internal error:|'
                    r'SError Interrupt|BUG:|Unable to handle kernel|WIFI_TERMINAL|WIFI_STARTUP_FAILED|'
                    r'qualification stopped:|CAL_PROCEDURE_FAILED|D7_CALIBRATION_FAILED|'
-                   r'SCAN_INTERFACE_SETUP_FAILED|RF_FAILED|recovery-required=1', re.I)
+                   r'SCAN_INTERFACE_SETUP_FAILED|RF_FAILED|recovery-required=1|WARNING:|'
+                   r'UBSAN:|hung_task|blocked for more than|WIFI_FLR_REFUSED_OR_FAILED', re.I)
 
 
 def run(argv, timeout=30):
@@ -131,6 +133,32 @@ def wifi_dns(iface):
     raise RuntimeError('Wi-Fi-bound upstream DNS lookup failed')
 
 
+def profile_security(profile_uuid):
+    key = run(['nmcli', '-g', '802-11-wireless-security.key-mgmt',
+               'connection', 'show', 'uuid', profile_uuid])
+    require(key.returncode == 0, 'Profile security unavailable')
+    mode = key.stdout.strip()
+    # No wireless-security setting is open; key-mgmt "none" is static WEP.
+    require(mode in ('', 'wpa-psk'), 'Unsupported profile authentication')
+    return 'WPA2' if mode == 'wpa-psk' else 'OPEN'
+
+
+@contextmanager
+def profile_band(profile_uuid, band):
+    original = run(['nmcli', '-g', '802-11-wireless.band', 'connection',
+                    'show', 'uuid', profile_uuid])
+    require(original.returncode == 0, 'Original profile band unavailable')
+    try:
+        require(run(['nmcli', 'connection', 'modify', 'uuid', profile_uuid,
+                     '802-11-wireless.band', band]).returncode == 0, 'Band selection failed')
+        yield
+    finally:
+        # Also restore after activation errors, timeouts or interrupted testing.
+        require(run(['nmcli', 'connection', 'modify', 'uuid', profile_uuid,
+                     '802-11-wireless.band', original.stdout.strip()]).returncode == 0,
+                'Profile band restoration failed')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--expected-release', required=True)
@@ -156,6 +184,7 @@ def main():
         profile_uuid = profile.stdout.strip()
         require(profile.returncode == 0 and re.fullmatch(r'[0-9a-f-]{36}', profile_uuid),
                 'Missing or ambiguous profile')
+        result['authentication'] = profile_security(profile_uuid)
         ssid_query = run(['nmcli', '-g', '802-11-wireless.ssid', 'connection', 'show',
                           'uuid', profile_uuid])
         ssid = ssid_query.stdout.strip()
@@ -190,45 +219,44 @@ def main():
         if not args.connect:
             result['result'] = 'WIFI_SCAN_OBSERVED'
         else:
-            require(run(['nmcli', 'connection', 'modify', 'uuid', profile_uuid,
-                         '802-11-wireless.band', args.band]).returncode == 0, 'Band selection failed')
-            connection = run(['nmcli', '--wait', '60', 'connection', 'up', 'uuid',
-                              profile_uuid, 'ifname', iface], 65)
-            result['activation_exit'] = connection.returncode
-            link = run(['iw', 'dev', iface, 'link']).stdout
-            freq = re.search(r'freq: (\d+)', link)
-            result['frequency_mhz'] = int(freq[1]) if freq else None
-            require(freq and ((int(freq[1]) < 3000) == (args.band == 'bg')), 'Unexpected associated band')
-            require(connection.returncode == 0, 'Saved profile activation failed')
-            for sample in range(3):
-                addresses = json.loads(run(['ip', '-j', '-4', 'address', 'show', 'dev', iface]).stdout)
-                require(any(a.get('scope') == 'global' for link in addresses
-                            for a in link.get('addr_info', [])), 'No DHCP IPv4 address')
-                routes = json.loads(run(['ip', '-j', '-4', 'route', 'show', 'default', 'dev', iface]).stdout)
-                require(routes and routes[0].get('gateway'), 'No Wi-Fi default gateway')
-                ping = run(['ping', '-I', iface, '-c', '3', '-W', '3', routes[0]['gateway']], 15)
-                require(ping.returncode == 0 and re.search(r'\b0(?:\.0+)?% packet loss', ping.stdout)
-                        and re.search(r'\b3 received\b', ping.stdout), 'Gateway packet loss')
-                dns_address = wifi_dns(iface)
-                payload = out / ('https-' + str(sample) + '.html')
-                transfer = run(['curl', '--fail', '--silent', '--show-error', '--interface', iface,
-                                '--noproxy', '*', '--resolve', 'example.com:443:' + dns_address,
-                                '--max-time', '20', '--output', str(payload), 'https://example.com/'], 25)
-                require(transfer.returncode == 0 and payload.is_file(), 'Wi-Fi HTTPS transfer failed')
-                body = payload.read_bytes()
-                require(b'Example Domain' in body and len(body) > 100, 'Unexpected HTTPS response')
-                kernel_ok()
-                result['samples'].append({'gateway_received': 3, 'gateway_loss_percent': 0,
-                                          'dns': True, 'tls_verified': True, 'download_bytes': len(body),
-                                          'download_sha256': hashlib.sha256(body).hexdigest()})
-                if sample != 2:
-                    time.sleep(10)
-            if args.desktop == 'kde':
-                require(all(run(['pgrep', '-x', name]).returncode == 0
-                            for name in ('plasmashell', 'kwin_x11')), 'KDE not running')
-                result['steps'].append('KDE_RUNNING_NO_KERNEL_FAULT')
-            result['steps'].extend(['WPA2_SAVED_PROFILE_ACTIVATED', 'DHCP_ROUTE_OBSERVED',
-                                    'GATEWAY_ROUNDTRIPS_VERIFIED', 'WIFI_BOUND_DNS_TLS_DOWNLOAD_VERIFIED'])
+            with profile_band(profile_uuid, args.band):
+                connection = run(['nmcli', '--wait', '60', 'connection', 'up', 'uuid',
+                                  profile_uuid, 'ifname', iface], 65)
+                result['activation_exit'] = connection.returncode
+                link = run(['iw', 'dev', iface, 'link']).stdout
+                freq = re.search(r'freq: (\d+)', link)
+                result['frequency_mhz'] = int(freq[1]) if freq else None
+                require(freq and ((int(freq[1]) < 3000) == (args.band == 'bg')), 'Unexpected associated band')
+                require(connection.returncode == 0, 'Saved profile activation failed')
+                for sample in range(3):
+                    addresses = json.loads(run(['ip', '-j', '-4', 'address', 'show', 'dev', iface]).stdout)
+                    require(any(a.get('scope') == 'global' for link in addresses
+                                for a in link.get('addr_info', [])), 'No DHCP IPv4 address')
+                    routes = json.loads(run(['ip', '-j', '-4', 'route', 'show', 'default', 'dev', iface]).stdout)
+                    require(routes and routes[0].get('gateway'), 'No Wi-Fi default gateway')
+                    ping = run(['ping', '-I', iface, '-c', '3', '-W', '3', routes[0]['gateway']], 15)
+                    require(ping.returncode == 0 and re.search(r'\b0(?:\.0+)?% packet loss', ping.stdout)
+                            and re.search(r'\b3 received\b', ping.stdout), 'Gateway packet loss')
+                    dns_address = wifi_dns(iface)
+                    payload = out / ('https-' + str(sample) + '.html')
+                    transfer = run(['curl', '--fail', '--silent', '--show-error', '--interface', iface,
+                                    '--noproxy', '*', '--resolve', 'example.com:443:' + dns_address,
+                                    '--max-time', '20', '--output', str(payload), 'https://example.com/'], 25)
+                    require(transfer.returncode == 0 and payload.is_file(), 'Wi-Fi HTTPS transfer failed')
+                    body = payload.read_bytes()
+                    require(b'Example Domain' in body and len(body) > 100, 'Unexpected HTTPS response')
+                    kernel_ok()
+                    result['samples'].append({'gateway_received': 3, 'gateway_loss_percent': 0,
+                                              'dns': True, 'tls_verified': True, 'download_bytes': len(body),
+                                              'download_sha256': hashlib.sha256(body).hexdigest()})
+                    if sample != 2:
+                        time.sleep(10)
+                if args.desktop == 'kde':
+                    require(all(run(['pgrep', '-x', name]).returncode == 0
+                                for name in ('plasmashell', 'kwin_x11')), 'KDE not running')
+                    result['steps'].append('KDE_RUNNING_NO_KERNEL_FAULT')
+                result['steps'].extend([result['authentication'] + '_SAVED_PROFILE_ACTIVATED', 'DHCP_ROUTE_OBSERVED',
+                                        'GATEWAY_ROUNDTRIPS_VERIFIED', 'WIFI_BOUND_DNS_TLS_DOWNLOAD_VERIFIED'])
             result['result'] = 'WIFI_PHYSICAL_NETWORK_E2E_PASS'
     except subprocess.TimeoutExpired:
         result['result'] = 'WIFI_NETWORK_E2E_FAILED'

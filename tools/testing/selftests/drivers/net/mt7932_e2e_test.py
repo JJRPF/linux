@@ -127,5 +127,60 @@ class DNSSocketTest(unittest.TestCase):
             e2e.dns_query('no-such-neo-if', '127.0.0.1', timeout=0.03)
 
 
+class QualificationTest(unittest.TestCase):
+    def test_authentication_comes_from_profile(self):
+        for key, expected in (('', 'OPEN'), ('wpa-psk', 'WPA2')):
+            with self.subTest(key=key), mock.patch.object(
+                    e2e, 'run', return_value=subprocess.CompletedProcess([], 0, key + '\n')):
+                self.assertEqual(e2e.profile_security('test-profile'), expected)
+        with mock.patch.object(e2e, 'run', return_value=subprocess.CompletedProcess([], 0, 'sae\n')):
+            with self.assertRaisesRegex(RuntimeError, 'Unsupported profile authentication'):
+                e2e.profile_security('test-profile')
+
+    def test_restore_band_after_success_or_timeout(self):
+        for original in ('', 'bg', 'a'):
+            for timeout in (False, True):
+                with self.subTest(original=original, timeout=timeout):
+                    outputs = [subprocess.CompletedProcess([], 0, original + '\n'),
+                               subprocess.CompletedProcess([], 0, ''),
+                               subprocess.CompletedProcess([], 0, '')]
+                    with mock.patch.object(e2e, 'run', side_effect=outputs) as run:
+                        try:
+                            with e2e.profile_band('test-profile', 'a'):
+                                if timeout:
+                                    raise subprocess.TimeoutExpired('activation', 60)
+                        except subprocess.TimeoutExpired:
+                            self.assertTrue(timeout)
+                        self.assertEqual(run.call_args_list[-1], mock.call(
+                            ['nmcli', 'connection', 'modify', 'uuid', 'test-profile',
+                             '802-11-wireless.band', original]))
+
+    def test_restore_band_even_if_selection_times_out(self):
+        outputs = [subprocess.CompletedProcess([], 0, 'bg\n'),
+                   subprocess.TimeoutExpired('modify', 30),
+                   subprocess.CompletedProcess([], 0, '')]
+        with mock.patch.object(e2e, 'run', side_effect=outputs) as run:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                with e2e.profile_band('test-profile', 'a'):
+                    self.fail('Timed out selection must not activate the profile')
+            self.assertEqual(run.call_args_list[-1].args[0][-1], 'bg')
+
+    def test_restoration_failure_prevents_a_pass(self):
+        outputs = [subprocess.CompletedProcess([], 0, 'bg\n'),
+                   subprocess.CompletedProcess([], 0, ''),
+                   subprocess.CompletedProcess([], 1, '')]
+        with mock.patch.object(e2e, 'run', side_effect=outputs):
+            with self.assertRaisesRegex(RuntimeError, 'Profile band restoration failed'):
+                with e2e.profile_band('test-profile', 'a'):
+                    pass
+
+    def test_new_fault_markers_are_terminal(self):
+        for message in ('WARNING: suspicious RCU usage', 'UBSAN: out-of-bounds',
+                        'hung_task', 'task worker blocked for more than 120 seconds',
+                        'WIFI_FLR_REFUSED_OR_FAILED error=-16'):
+            with self.subTest(message=message):
+                self.assertIsNotNone(e2e.fault.search(message))
+
+
 if __name__ == '__main__':
     unittest.main()
