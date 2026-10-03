@@ -88,8 +88,7 @@
 
 /*
  * The ANE has run on the M2 Max, so enable it here with its mailbox and
- * DARTs. t6020.dtsi defines APPLE_ANE_UNTESTED before including this
- * file: the ANE has not run on the M2 Pro yet.
+ * DARTs. The M2 Pro (t6020.dtsi includes this file) has the same die 0 ANE.
  */
 #ifndef APPLE_ANE_UNTESTED
 &ane {
