@@ -1333,3 +1333,7 @@ MODULE_FIRMWARE("mediatek/mt7932/wcal.bin");
 MODULE_FIRMWARE("mediatek/mt7932/oca2.bin");
 MODULE_FIRMWARE("mediatek/mt7932/config-original.bin");
 MODULE_FIRMWARE("mediatek/mt7932/policy/world-XZ.bin");
+/* Country selection is runtime-dependent. Initramfs builders supporting
+ * firmware globs must retain every installed policy, including later hints.
+ */
+MODULE_FIRMWARE("mediatek/mt7932/policy/[A-Z][A-Z].bin");
