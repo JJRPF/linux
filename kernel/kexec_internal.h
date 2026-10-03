@@ -21,10 +21,13 @@ int kimage_is_destination_range(struct kimage *image,
  * "simple" atomic variable that is acquired with a cmpxchg().
  */
 extern atomic_t __kexec_lock;
-bool kexec_blocked(void);
-const char *kexec_block_reason(void);
+bool notrace kexec_blocked(void);
+const char *notrace kexec_block_reason(void);
+#ifdef CONFIG_KEXEC_BLOCK_KUNIT_TEST
+bool kexec_test_load_limits_unlimited(void);
+#endif
 /* Caller holds the existing NMI-safe kexec lock; no image is dereferenced. */
-static inline bool kexec_crash_image_allowed(bool image_loaded)
+static __always_inline bool kexec_crash_image_allowed(bool image_loaded)
 {
 	return image_loaded && !kexec_blocked();
 }

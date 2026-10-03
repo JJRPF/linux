@@ -25,6 +25,8 @@ static int kexec_block_test_init(struct kunit *test)
 	struct kexec_block_test_state *state;
 	bool blocked;
 
+	if (!kexec_test_load_limits_unlimited())
+		kunit_skip(test, "a finite load-attempt budget is configured");
 	/* Never disturb a real device's retained-memory acquisition. */
 	if (!kexec_trylock())
 		kunit_skip(test, "a kexec operation is in progress");
@@ -177,7 +179,7 @@ static void kexec_block_file_load_test(struct kunit *test)
 
 static void kexec_block_crash_policy_test(struct kunit *test)
 {
-	bool empty_allowed, loaded_allowed;
+	bool empty_allowed, loaded_allowed, blocked;
 
 	kexec_test_acquire(test);
 	KUNIT_ASSERT_TRUE(test, kexec_trylock());
@@ -189,11 +191,13 @@ static void kexec_block_crash_policy_test(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, loaded_allowed);
 	kexec_test_release(test);
 	KUNIT_ASSERT_TRUE(test, kexec_trylock());
+	/* A real guard may have appeared since this case's initial skip check. */
+	blocked = kexec_blocked();
 	empty_allowed = kexec_crash_image_allowed(false);
 	loaded_allowed = kexec_crash_image_allowed(true);
 	kexec_unlock();
 	KUNIT_EXPECT_FALSE(test, empty_allowed);
-	KUNIT_EXPECT_TRUE(test, loaded_allowed);
+	KUNIT_EXPECT_EQ(test, loaded_allowed, !blocked);
 }
 
 static struct kunit_case kexec_block_test_cases[] = {

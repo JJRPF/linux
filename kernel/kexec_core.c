@@ -99,7 +99,7 @@ void kexec_unblock(struct kexec_blocker *blocker)
 }
 
 /* All callers hold __kexec_lock, so checking and execution cannot race. */
-bool kexec_blocked(void)
+bool notrace kexec_blocked(void)
 {
 	return atomic_read(&kexec_blockers) != 0;
 }
@@ -109,7 +109,7 @@ bool kexec_blocked(void)
  * the current nonzero interval, even if that guard has since been released.
  * The reason has boot lifetime; release remains lock-free and NMI-safe.
  */
-const char *kexec_block_reason(void)
+const char *notrace kexec_block_reason(void)
 {
 	return kexec_first_reason;
 }
@@ -1092,6 +1092,22 @@ static struct kexec_load_limit load_limit_panic = {
 	.mutex = __MUTEX_INITIALIZER(load_limit_panic.mutex),
 	.limit = -1,
 };
+
+#ifdef CONFIG_KEXEC_BLOCK_KUNIT_TEST
+bool kexec_test_load_limits_unlimited(void)
+{
+	bool unlimited;
+
+	/* Never let a test consume a deliberately finite load-attempt budget. */
+	mutex_lock(&load_limit_reboot.mutex);
+	unlimited = load_limit_reboot.limit == -1;
+	mutex_unlock(&load_limit_reboot.mutex);
+	mutex_lock(&load_limit_panic.mutex);
+	unlimited &= load_limit_panic.limit == -1;
+	mutex_unlock(&load_limit_panic.mutex);
+	return unlimited;
+}
+#endif
 
 struct kimage *kexec_image;
 struct kimage *kexec_crash_image;
