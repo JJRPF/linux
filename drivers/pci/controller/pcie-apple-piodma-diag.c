@@ -55,8 +55,8 @@
 #define PIODMA_IRQ_LIMIT		16
 
 static bool enumerate = true;
-module_param(enumerate, bool, 0400);
-MODULE_PARM_DESC(enumerate, "Prime once, validate native ECAM, and enumerate the two Neo functions");
+module_param(enumerate, bool, 0444);
+MODULE_PARM_DESC(enumerate, "Boot-time gate: prime and enumerate Neo radios (read-only, default on)");
 
 struct apple_piodma_request {
 	u16 offset;
