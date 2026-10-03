@@ -744,11 +744,20 @@ reset_touchid() {
   for f in "${TOUCHID_STATE_FILES[@]}"; do [[ -e $f ]] && found=1; done
   ((found)) || die "no Touch ID state on this Mac; nothing to reset"
 
-  # Only a keybag the driver could not load is worth replacing. It loads the
-  # keybag the first time the sensor is opened, so ask fprintd once first.
+  # Ask for sudo now, in the foreground: a password prompt under timeout
+  # below could not read the terminal. Not sudo -v, which wants a password
+  # unless every rule for the user is NOPASSWD (a wheel member's is not).
+  if [[ -n $sudo ]]; then $sudo true || die "--reset-touchid needs sudo"; fi
+
+  # Only a keybag the driver could not load is worth replacing. At boot the
+  # driver reports keybag=present for any keybag file it finds; it loads the
+  # keybag, and reports failed if that does not work, only when the sensor is
+  # first opened. Until then touchid=unknown, so open it through fprintd once.
   keybag=$(sep_diag keybag)
-  if [[ $keybag == unknown ]]; then
-    timeout 20 $sudo fprintd-list root >/dev/null 2>&1 || true
+  [[ $keybag == none ]] &&
+    die "the Touch ID driver is not running (no SEP diagnostics). Boot the aurora kernel first."
+  if [[ $(sep_diag touchid) == unknown ]]; then
+    timeout --foreground 20 $sudo fprintd-list root >/dev/null 2>&1 || true
     keybag=$(sep_diag keybag)
   fi
   if [[ $keybag != failed ]]; then
@@ -759,7 +768,8 @@ reset_touchid() {
 
   warn "this removes every enrolled fingerprint on this Mac and creates a new Touch ID keybag at the next boot.
     Anything sealed with the Secure Enclave (kernel trusted keys) can no longer be unsealed.
-    The old keybag stays in the Secure Enclave, unused; it cannot be deleted, and this cannot be undone once the Mac has rebooted."
+    The old keybag stays in the Secure Enclave, unused; it cannot be deleted, and this cannot be undone once the Mac has rebooted.
+    If Touch ID has failed only this once, reboot and try it again first: a passing error looks the same."
   if ((!yes)); then
     # Piped from curl, stdin is the script; ask on the terminal, if there is one.
     { : </dev/tty; } 2>/dev/null || die "no terminal to confirm on; run again with --reset-touchid --yes"
@@ -790,6 +800,7 @@ reset_touchid() {
     esac
     if ! { $sudo mkdir -p "$(dirname "$to")" && $sudo mv "$src" "$to"; }; then
       for d in "${moved[@]}"; do $sudo mv "${d#*|}" "${d%%|*}" || warn "could not put back ${d%%|*} from ${d#*|}"; done
+      $sudo systemctl unmask --runtime fprintd.service || true
       die "could not move $src; put back everything already moved, so Touch ID is as it was"
     fi
     moved+=("$src|$to")
