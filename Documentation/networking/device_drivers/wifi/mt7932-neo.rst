@@ -110,6 +110,10 @@ Keep the installed calibration inputs stable while the Wi-Fi driver is bound:
 it requests ``oca2.bin`` again for runtime D7 requests and each association.
 ``config-original.bin`` and country policies require J7CF/J7RP packaging; copying
 unconverted source files to those names does not satisfy the format checks.
+If loading Wi-Fi in the initramfs, include every fixed input and the selected
+country package there explicitly. Firmware metadata includes a country-file
+pattern, but an initramfs builder's glob handling may select only one match;
+inspect the resulting image rather than assuming every country is included.
 
 Load the radio drivers after these inputs are available on the real root.
 There are three distinct Wi-Fi failure classes:
