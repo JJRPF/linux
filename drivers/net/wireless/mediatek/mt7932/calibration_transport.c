@@ -39,8 +39,7 @@ int mt_cal_procedure(struct mt7932 *m, struct mt7932_cal_piece *pieces,
 		return 0;
 fail:
 	spin_lock_irqsave(&m->response_lock, flags);
-	m->cal_state.error = ret;
-	m->cal_state.active = false;
+	mt_rf_fail_locked(m, ret);
 	spin_unlock_irqrestore(&m->response_lock, flags);
 	dev_err(&m->pdev->dev, "CAL_PROCEDURE_FAILED: %d; epoch latched, no replay\n", ret);
 	return ret;
@@ -57,15 +56,17 @@ int mt_calibration_gate(struct mt7932 *m)
 
 	if (!m->six_ghz_valid || m->smart_version != 12 || !m->preload_version)
 		return -EOPNOTSUPP;
-	ret = request_firmware_direct(&wcal, "mediatek/mt7932/wcal.bin", &m->pdev->dev);
+	ret = mt_request_input(m, &wcal, "mediatek/mt7932/wcal.bin");
 	if (ret)
 		return ret;
-	ret = request_firmware_direct(&oca, "mediatek/mt7932/oca2.bin", &m->pdev->dev);
+	ret = mt_request_input(m, &oca, "mediatek/mt7932/oca2.bin");
 	if (ret)
 		goto out_wcal;
 	ret = -EINVAL;
-	if (!wcal->size || wcal->size > 1024)
+	if (!wcal->size || wcal->size > 1024) {
+		dev_err(&m->pdev->dev, "local input mediatek/mt7932/wcal.bin has invalid size %zu\n", wcal->size);
 		goto out;
+	}
 	planned = mt7932_cal_power_on(oca->data, oca->size, m->six_ghz, pieces);
 	if (planned < 0) {
 		ret = planned;
@@ -137,6 +138,8 @@ int mt_calibration_gate(struct mt7932 *m)
 	}
 	ret = 0;
 out:
+	if (ret)
+		dev_err(&m->pdev->dev, "own calibration using mediatek/mt7932/wcal.bin and mediatek/mt7932/oca2.bin failed: %d\n", ret);
 	release_firmware(oca);
 out_wcal:
 	release_firmware(wcal);

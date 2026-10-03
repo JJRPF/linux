@@ -261,7 +261,8 @@ int mt_data_prepare(struct mt7932 *m)
 	 */
 	dev_info(&m->pdev->dev, "MAC_RTS_RESPONSE: sequence matched, EID=%02x length=%zu\n",
 		 m->reply[28], m->reply_length);
-	WRITE_ONCE(m->data_ready, true);
+	/* Publish the initialized data_lock and DMA state to failure handlers. */
+	smp_store_release(&m->data_ready, true);
 	dev_info(&m->pdev->dev, "ETHERNET_PREPARED: TX0 retained coherent slots=512, RX translation enabled\n");
 	return 0;
 }

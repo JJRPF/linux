@@ -56,7 +56,16 @@ bool mt_transport_polled(void)
 bool mt_rf_allowed(struct mt7932 *m)
 {
 	return !READ_ONCE(m->stopping) && READ_ONCE(m->rf_ready) && !READ_ONCE(m->reg_pending) &&
-	       !READ_ONCE(m->policy_failed);
+	       !READ_ONCE(m->policy_failed) && !READ_ONCE(m->link_failed);
+}
+
+int mt_request_input(struct mt7932 *m, const struct firmware **fw, const char *name)
+{
+	int ret = request_firmware_direct(fw, name, &m->pdev->dev);
+
+	if (ret)
+		dev_err(&m->pdev->dev, "local input %s unavailable: %d\n", name, ret);
+	return ret;
 }
 
 u32 mt_read(struct mt7932 *m, u32 reg)
@@ -174,6 +183,8 @@ static void mt_receive(struct mt7932 *m, const u8 *packet, size_t length)
 				     m->smart_version);
 		dev_info(&m->pdev->dev, "CAL_EVENT: seq=%u length=%zu result=%d credits=%u/%u\n",
 			 event.seq, event.length, ret, m->cal_state.received, m->cal_state.expected);
+		if (ret < 0)
+			mt_rf_fail_locked(m, ret);
 		if (ret)
 			complete(&m->cal_response);
 		goto unlock;
@@ -186,14 +197,11 @@ static void mt_receive(struct mt7932 *m, const u8 *packet, size_t length)
 		 * for checked reset, rather than silently declaring retirement safe.
 		 */
 		if (m->disconnecting || m->link_failed) {
-			m->cal_state.error = -EPROTO;
-			m->link_failed = true;
-			complete(&m->cal_response);
+			mt_rf_fail_locked(m, -EPROTO);
 			goto unlock;
 		}
 		if (event.length < 52 || m->cal_request_count == ARRAY_SIZE(m->cal_requests)) {
-			m->cal_state.error = -EPROTO;
-			complete(&m->cal_response);
+			mt_rf_fail_locked(m, -EPROTO);
 		} else {
 			unsigned int at = (m->cal_request_head + m->cal_request_count) % ARRAY_SIZE(m->cal_requests);
 
@@ -841,10 +849,11 @@ static int mt_precal_gate(struct mt7932 *m)
 	/* Stock EfuseBufferModeCal=3, own eFuse board3: original PPR source2.
 	 * This is not the external EEPROM/source0 or own-WCAL/source3 path.
 	 */
-	ret = request_firmware_direct(&ppr, "mediatek/mt7932/ppr.bin", &m->pdev->dev);
+	ret = mt_request_input(m, &ppr, "mediatek/mt7932/ppr.bin");
 	if (ret)
 		return ret;
 	if (ppr->size != sizeof(request) - 4) {
+		dev_err(&m->pdev->dev, "local input mediatek/mt7932/ppr.bin has invalid size %zu\n", ppr->size);
 		release_firmware(ppr);
 		return -EINVAL;
 	}
@@ -913,24 +922,32 @@ static int mt_firmware_gate(struct mt7932 *m)
 	u32 entry = 0;
 	int ret, patches, regions, i;
 
-	ret = request_firmware_direct(&patch, "mediatek/mt7932/IZUBA_WIFI_MT7932_patch_mcu_1_2_hdr.bin", &m->pdev->dev);
+	ret = mt_request_input(m, &patch, "mediatek/mt7932/IZUBA_WIFI_MT7932_patch_mcu_1_2_hdr.bin");
 	if (ret)
 		return ret;
-	ret = request_firmware_direct(&ram, "mediatek/mt7932/IZUBA_W7932_2.bin", &m->pdev->dev);
+	ret = mt_request_input(m, &ram, "mediatek/mt7932/IZUBA_W7932_2.bin");
 	if (ret)
 		goto out_patch;
 	/* Validate all regions before emitting the first download command. */
 	patches = mt7932_patch_region(patch->data, patch->size, 0, &region);
 	regions = mt7932_ram_region(ram->data, ram->size, 0, &region);
 	ret = -EINVAL;
-	if (patches < 0 || regions < 0)
+	if (patches < 0 || regions < 0) {
+		dev_err(&m->pdev->dev, "local input %s has invalid region table\n",
+			patches < 0 ? "mediatek/mt7932/IZUBA_WIFI_MT7932_patch_mcu_1_2_hdr.bin" :
+				      "mediatek/mt7932/IZUBA_W7932_2.bin");
 		goto out;
+	}
 	for (i = 0; i < patches; i++)
-		if (mt7932_patch_region(patch->data, patch->size, i, &region) < 0)
+		if (mt7932_patch_region(patch->data, patch->size, i, &region) < 0) {
+			dev_err(&m->pdev->dev, "local input mediatek/mt7932/IZUBA_WIFI_MT7932_patch_mcu_1_2_hdr.bin has invalid region %d\n", i);
 			goto out;
+		}
 	for (i = 0; i < regions; i++)
-		if (mt7932_ram_region(ram->data, ram->size, i, &region) < 0)
+		if (mt7932_ram_region(ram->data, ram->size, i, &region) < 0) {
+			dev_err(&m->pdev->dev, "local input mediatek/mt7932/IZUBA_W7932_2.bin has invalid region %d\n", i);
 			goto out;
+		}
 	dev_info(&m->pdev->dev, "stock containers patch=%zu/%d regions RAM=%zu/%d regions\n",
 		 patch->size, patches, ram->size, regions);
 	put_unaligned_le32(2, request);
@@ -1308,3 +1325,11 @@ static struct pci_driver mt_driver = {
 module_pci_driver(mt_driver);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("J700 MT7932 firmware-owned cfg80211 station driver");
+
+MODULE_FIRMWARE("mediatek/mt7932/IZUBA_WIFI_MT7932_patch_mcu_1_2_hdr.bin");
+MODULE_FIRMWARE("mediatek/mt7932/IZUBA_W7932_2.bin");
+MODULE_FIRMWARE("mediatek/mt7932/ppr.bin");
+MODULE_FIRMWARE("mediatek/mt7932/wcal.bin");
+MODULE_FIRMWARE("mediatek/mt7932/oca2.bin");
+MODULE_FIRMWARE("mediatek/mt7932/config-original.bin");
+MODULE_FIRMWARE("mediatek/mt7932/policy/world-XZ.bin");

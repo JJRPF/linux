@@ -34,6 +34,55 @@ static bool mt_channel_event(struct mt7932 *m, const u8 *body, size_t length)
 	return true;
 }
 
+void mt_rf_fail_locked(struct mt7932 *m, int error)
+{
+	bool first = !m->link_failed;
+	bool data_ready = smp_load_acquire(&m->data_ready);
+
+	lockdep_assert_held(&m->response_lock);
+	if (m->stopping)
+		return;
+	if (error >= 0)
+		error = -EIO;
+	WRITE_ONCE(m->rf_ready, false);
+	WRITE_ONCE(m->link_failed, true);
+	if (!m->cal_state.error)
+		m->cal_state.error = error;
+	m->cal_state.active = false;
+	complete_all(&m->cal_response);
+	if (first)
+		dev_err(&m->pdev->dev,
+			"RF_FAILED: %d; host RF admission closed, ownership retained until checked reset\n",
+			error);
+	if (!m->interface_registered)
+		return;
+
+	/* Join a TX completion that may have passed its earlier wake check. */
+	if (data_ready)
+		spin_lock(&m->data_lock);
+	netif_carrier_off(m->netdev);
+	netif_stop_queue(m->netdev);
+	if (data_ready)
+		spin_unlock(&m->data_lock);
+	if (m->connecting) {
+		if (!m->connect_error)
+			m->connect_error = error;
+		complete_all(&m->assoc_start);
+		complete_all(&m->assoc_done);
+		complete_all(&m->discovery_done);
+	} else if (m->connected) {
+		/* Hardware ownership is uncertain: report failure, retain the peer. */
+		m->connected = false;
+		m->disconnecting = true;
+		cfg80211_disconnected(m->netdev, WLAN_REASON_UNSPECIFIED,
+				      NULL, 0, true, GFP_ATOMIC);
+	}
+	if (m->scan_request) {
+		m->scan_aborted = true;
+		schedule_work(&m->scan_finish_work);
+	}
+}
+
 /* One owned station, firmware WPA2-PSK handshake; no host key fabrication. */
 static int mt_peer_reserve(struct mt7932 *m)
 {
@@ -183,13 +232,15 @@ static int mt_association_calibration(struct mt7932 *m)
 	struct mt7932_cal_piece pieces[2];
 	int ret;
 
-	ret = request_firmware_direct(&oca, "mediatek/mt7932/oca2.bin", &m->pdev->dev);
+	ret = mt_request_input(m, &oca, "mediatek/mt7932/oca2.bin");
 	if (ret)
 		return ret;
 	ret = mt7932_cal_association(oca->data, oca->size, m->connect_center, pieces);
 	if (ret == 2)
 		ret = mt_cal_procedure(m, pieces, 2, 1, 0);
 	release_firmware(oca);
+	if (ret)
+		dev_err(&m->pdev->dev, "association calibration using mediatek/mt7932/oca2.bin failed: %d\n", ret);
 	return ret;
 }
 
@@ -413,6 +464,8 @@ free:
 	mutex_lock(&m->command_mutex);
 report:
 	ret = ret ?: READ_ONCE(m->connect_error);
+	if (!ret && !mt_rf_allowed(m))
+		ret = -EIO;
 	if (!ret && (m->connect_open || m->band2.ht_cap.ht_supported) &&
 	    !m->assoc_request_seen)
 		ret = -EPROTO;
@@ -440,8 +493,8 @@ report:
 	 * cfg80211 queues these notifications; GFP_ATOMIC keeps this IRQ-safe.
 	 */
 	spin_lock_irqsave(&m->response_lock, flags);
-	if (!ret && m->connect_error) {
-		ret = m->connect_error;
+	if (!ret && (m->connect_error || !mt_rf_allowed(m))) {
+		ret = m->connect_error ?: -EIO;
 		spin_unlock_irqrestore(&m->response_lock, flags);
 		goto report;
 	}

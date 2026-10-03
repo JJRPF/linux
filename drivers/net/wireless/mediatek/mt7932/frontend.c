@@ -471,7 +471,7 @@ static void mt_cal_work(struct work_struct *work)
 	mutex_lock(&m->command_mutex);
 	if (!READ_ONCE(m->rf_ready))
 		goto unlock;
-	ret = request_firmware_direct(&oca, "mediatek/mt7932/oca2.bin", &m->pdev->dev);
+	ret = mt_request_input(m, &oca, "mediatek/mt7932/oca2.bin");
 	if (ret)
 		goto fail;
 	for (;;) {
@@ -500,9 +500,10 @@ static void mt_cal_work(struct work_struct *work)
 	if (!ret)
 		goto unlock;
 fail:
-	WRITE_ONCE(m->rf_ready, false);
-	mt_abort_scan(m->wiphy, &m->wdev);
-	dev_err(&m->pdev->dev, "D7_CALIBRATION_FAILED: %d; RF operations stopped\n", ret);
+	spin_lock_irqsave(&m->response_lock, flags);
+	mt_rf_fail_locked(m, ret);
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	dev_err(&m->pdev->dev, "D7_CALIBRATION_FAILED: %d; mediatek/mt7932/oca2.bin RF operations stopped\n", ret);
 unlock:
 	mutex_unlock(&m->command_mutex);
 }
@@ -553,6 +554,7 @@ int mt_register_interface(struct mt7932 *m)
 
 int mt_enable_scan(struct mt7932 *m)
 {
+	unsigned long flags;
 	int ret = mt_data_prepare(m);
 
 	if (ret)
@@ -562,9 +564,17 @@ int mt_enable_scan(struct mt7932 *m)
 		if (ret)
 			return ret;
 	}
+	/* An RX calibration failure must win over late startup publication. */
+	spin_lock_irqsave(&m->response_lock, flags);
+	if (m->stopping || m->link_failed || m->cal_state.error) {
+		ret = m->cal_state.error ?: -EIO;
+		spin_unlock_irqrestore(&m->response_lock, flags);
+		return ret;
+	}
 	WRITE_ONCE(m->rf_ready, true);
 	dev_info(&m->pdev->dev, "CFG80211_SCAN_READY: %s, carrier off until WPA2 authorization\n", m->netdev->name);
 	schedule_work(&m->cal_work);
+	spin_unlock_irqrestore(&m->response_lock, flags);
 	return 0;
 }
 

@@ -26,7 +26,7 @@ static int mt_stock_config(struct mt7932 *m)
 	unsigned int count, i, j, batch;
 	int ret;
 
-	ret = request_firmware_direct(&file, "mediatek/mt7932/config-original.bin", &m->pdev->dev);
+	ret = mt_request_input(m, &file, "mediatek/mt7932/config-original.bin");
 	if (ret)
 		return ret;
 	ret = -EINVAL;
@@ -120,6 +120,8 @@ static int mt_stock_config(struct mt7932 *m)
 free:
 	kfree(records);
 out:
+	if (ret)
+		dev_err(&m->pdev->dev, "local input mediatek/mt7932/config-original.bin processing failed: %d\n", ret);
 	release_firmware(file);
 	return ret;
 }
@@ -271,10 +273,13 @@ static void mt_startup_work(struct work_struct *work)
 			else
 				scnprintf(path, sizeof(path), "mediatek/mt7932/policy/%c%c.bin",
 					  reg.alpha2[0], reg.alpha2[1]);
-			ret = request_firmware_direct(&file, path, &m->pdev->dev);
+			ret = mt_request_input(m, &file, path);
 		}
-		if (!ret)
+		if (!ret) {
 			ret = mt7932_policy_parse(&policy, file->data, file->size, reg.domain);
+			if (ret)
+				dev_err(&m->pdev->dev, "local input %s has invalid policy: %d\n", path, ret);
+		}
 		mutex_lock(&m->command_mutex);
 		if (READ_ONCE(m->stopping) || generation != READ_ONCE(m->reg_generation))
 			goto next;

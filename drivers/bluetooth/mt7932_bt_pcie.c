@@ -236,22 +236,33 @@ static int bt7932_validate_ptx(const u8 *data, size_t size)
 	return next == size ? 0 : -EINVAL;
 }
 
+static int bt7932_input_error(struct bt7932 *bt, const char *name, int error)
+{
+	dev_err(&bt->pdev->dev, "local input %s rejected: %d\n", name, error);
+	return error;
+}
+
 static int bt7932_read_inputs(struct bt7932 *bt)
 {
 	const struct firmware *fw;
+	const char *name;
 	const u8 *trailer;
 	u64 last;
 	int i, ret;
 
 	if (!bt->rom) {
-		ret = request_firmware(&fw, BT7932_FW_B0, &bt->pdev->dev);
+		name = BT7932_FW_B0;
+		ret = request_firmware(&fw, name, &bt->pdev->dev);
 	} else {
-		ret = firmware_request_nowarn(&fw, BT7932_FW_B1, &bt->pdev->dev);
-		if (ret == -ENOENT)
-			ret = request_firmware(&fw, BT7932_FW_B1_FALLBACK, &bt->pdev->dev);
+		name = BT7932_FW_B1;
+		ret = firmware_request_nowarn(&fw, name, &bt->pdev->dev);
+		if (ret == -ENOENT) {
+			name = BT7932_FW_B1_FALLBACK;
+			ret = request_firmware(&fw, name, &bt->pdev->dev);
+		}
 	}
 	if (ret)
-		return ret;
+		return bt7932_input_error(bt, name, ret);
 	if (fw->size <= 32 || fw->size - 32 > U32_MAX - 3) {
 		ret = -EINVAL;
 		goto release_image;
@@ -279,10 +290,11 @@ static int bt7932_read_inputs(struct bt7932 *bt)
 release_image:
 	release_firmware(fw);
 	if (ret)
-		return ret;
-	ret = request_firmware(&fw, BT7932_CAL, &bt->pdev->dev);
+		return bt7932_input_error(bt, name, ret);
+	name = BT7932_CAL;
+	ret = request_firmware(&fw, name, &bt->pdev->dev);
 	if (ret)
-		return ret;
+		return bt7932_input_error(bt, name, ret);
 	if (!fw->size || fw->size > U16_MAX) {
 		ret = -EINVAL;
 	} else {
@@ -293,10 +305,11 @@ release_image:
 	}
 	release_firmware(fw);
 	if (ret)
-		return ret;
-	ret = request_firmware(&fw, BT7932_PTX, &bt->pdev->dev);
+		return bt7932_input_error(bt, name, ret);
+	name = BT7932_PTX;
+	ret = request_firmware(&fw, name, &bt->pdev->dev);
 	if (ret)
-		return ret;
+		return bt7932_input_error(bt, name, ret);
 	ret = bt7932_validate_ptx(fw->data, fw->size);
 	if (!ret) {
 		bt->ptx_size = fw->size;
@@ -306,10 +319,11 @@ release_image:
 	}
 	release_firmware(fw);
 	if (ret)
-		return ret;
-	ret = request_firmware(&fw, BT7932_ADDR, &bt->pdev->dev);
+		return bt7932_input_error(bt, name, ret);
+	name = BT7932_ADDR;
+	ret = request_firmware(&fw, name, &bt->pdev->dev);
 	if (ret)
-		return ret;
+		return bt7932_input_error(bt, name, ret);
 	if (fw->size != sizeof(bt->address) ||
 	    !memchr_inv(fw->data, 0, fw->size) || !memchr_inv(fw->data, 0xff, fw->size)) {
 		ret = -EINVAL;
@@ -318,7 +332,7 @@ release_image:
 			bt->address[i] = fw->data[sizeof(bt->address) - i - 1];
 	}
 	release_firmware(fw);
-	return ret;
+	return ret ? bt7932_input_error(bt, name, ret) : 0;
 }
 
 static int bt7932_reserve(size_t *total, size_t bytes, size_t *offset)

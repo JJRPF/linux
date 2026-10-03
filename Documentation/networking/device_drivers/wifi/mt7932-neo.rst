@@ -32,6 +32,13 @@ and kexec at runtime while its arena is retained; other Macs keep their normal
 behavior. Firmware loading is selected by both radio drivers. This shared
 build still requires physical Neo qualification.
 
+``CONFIG_CRYPTO_CMAC=m`` is supported with the modular Bluetooth core. Generic
+Bluetooth SMP allocates ``cmac(aes)`` through the crypto API. Install the crypto
+modules and preserve algorithm autoload; if Bluetooth starts in the initramfs,
+include its crypto providers there. With ``CONFIG_CRYPTO_AES=y``, this kernel
+also registers its AES CMAC implementation when CMAC is configured as a module.
+The earlier tested ``CONFIG_CRYPTO_CMAC=y`` is not a Wi-Fi driver requirement.
+
 Use the ordinary cfg80211 regulatory database and applicable country policy.
 The validated first-admission fallback is kernel country 00 with firmware XZ.
 
@@ -71,13 +78,30 @@ Wi-Fi requests the following files under ``mediatek/mt7932/``:
 Bluetooth requests these files under ``mediatek/``:
 
 * ``MT7932B1_OS_TypeB_2.0.177.0_260706180356.bin`` or the supported fallback
-  ``MT7932B1_OS_TypeB_0.1.133.0_260128190103.bin``;
-* ``j700-mt7932-btcal.bin`` (388 bytes);
+  ``MT7932B1_OS_TypeB_0.1.133.0_260128190103.bin`` for ROM1. The fallback is
+  tried only when the preferred file is absent. ROM0 instead requests
+  ``MT7932B0_OS_TypeB_0.1.44.0_241001003711.bin``; admitting that variant in
+  software does not qualify it on physical Neo hardware;
+* ``j700-mt7932-btcal.bin`` (the measured input is 388 bytes; the driver accepts
+  nonempty inputs up to 65535 bytes and relies on HCI setup acceptance);
 * ``MT7932_PTB_IzubaA_0.1.0.0_20251021141303.ptx`` (198 bytes);
 * ``j700-mt7932-bdaddr.bin`` (the unit's six-byte Bluetooth address).
 
 Extraction and packaging require the original local assets. Keep these
 assets and unit identities out of commits and public test reports.
+
+Keep the installed calibration inputs stable while the Wi-Fi driver is bound:
+it requests ``oca2.bin`` again for runtime D7 requests and each association.
+``config-original.bin`` and country policies require J7CF/J7RP packaging; copying
+unconverted source files to those names does not satisfy the format checks.
+
+Load the radio drivers after these inputs are available on the real root.
+An early Wi-Fi probe already owns DMA before it requests firmware. Only an
+explicit ``initialization failed; DMA retired`` message confirms that its
+checked reset completed and the unbound driver can be loaded again. A failed
+reset retains the binding and DMA; do not reprobe it. Use a full external reset
+after a failed or uncertain admission. Installing a missing startup calibration
+file does not clear a terminal RF failure in an already bound epoch.
 
 Repeatable physical network test
 --------------------------------
