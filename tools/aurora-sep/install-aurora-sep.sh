@@ -772,13 +772,18 @@ SAFETY, NON-NEGOTIABLE
           apple_sep lines at all. Capture the whole block either way.
    If the profile line says a SoC you did not expect, report that verbatim.
    On every MacBook Pro M2 Pro/Max (J414s, J414c, J416s, J416c) it reads
-   "T6020/J414s", on the MacBook Pro 14"/16" M1 Max (J314c, J316c)
-   "T6000/J316s", and on the MacBook Air 13" M2 (J413) "T8112/J415"; those are
-   expected.
-   If "CREATE_KEYBAG" fails with status -13, quote your system-fw-version.
-   Every M2-family Mac that has created its keybag was on 26.6.x; on an older
-   one, update macOS to 26.6.x, boot back into Linux, re-run the installer and
-   report again. If it still fails on 26.6.x, that is the report we need.
+   "T6020/J414s", or "T6020/J414s (13.5 key store)" on system firmware 26.2
+   or earlier; on the MacBook Pro 14"/16" M1 Max (J314c, J316c)
+   "T6000/J316s", and on the MacBook Air 13" M2 (J413) "T8112/J415". Those
+   are expected. On an M2 Pro/Max, also quote the line that starts
+   "M2 Pro/Max on system firmware".
+   If "CREATE_KEYBAG" fails with status -13, quote that line too. Firmware
+   up to 26.2 uses the 13.5 key store and later firmware variant 5. Variant
+   5 works on 26.6.x and 27.0; 26.3 to 26.5 have not been tried, so a -13
+   there is the report we need.
+   Updating macOS from 26.2 or earlier to a later release after enrolling
+   loses the enrolments: Touch ID then needs a new keybag. Say so if that
+   is what happened.
    The sensor itself: "sudo dmesg | grep apple-mesa" should say the power line
    came "from the device node". Quote it if it says anything else.
 
