@@ -28,7 +28,7 @@
 #include <linux/of_platform.h>
 #include <linux/overflow.h>
 #include <linux/pci.h>
-#include <linux/pci-apple-piodma.h>
+#include <linux/soc/apple/pci-apple-piodma.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/sched.h>

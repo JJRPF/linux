@@ -33,7 +33,7 @@
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/pci-apple.h>
-#include <linux/pci-apple-piodma.h>
+#include <linux/soc/apple/pci-apple-piodma.h>
 #include <linux/pci-ecam.h>
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>

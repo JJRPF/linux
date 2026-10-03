@@ -3,7 +3,7 @@
  * Clean-room contract: NEO_MT7932_DOWNLOAD_AND_NIC_CAP_CONTRACT.md.
  * All addresses here are BAR0 offsets, never chip/CPU physical addresses.
  */
-#include <linux/pci-apple-piodma.h>
+#include <linux/soc/apple/pci-apple-piodma.h>
 
 #include "mt7932.h"
 

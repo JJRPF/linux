@@ -19,7 +19,7 @@
 #include <linux/of.h>
 #include <linux/overflow.h>
 #include <linux/pci.h>
-#include <linux/pci-apple-piodma.h>
+#include <linux/soc/apple/pci-apple-piodma.h>
 #include <linux/pm_runtime.h>
 #include <linux/skbuff.h>
 #include <linux/slab.h>
