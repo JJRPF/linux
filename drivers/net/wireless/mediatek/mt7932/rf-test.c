@@ -110,7 +110,33 @@ static void mt_rf_failure_preserves_first_error_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mt_enable_scan(m), -ENOENT);
 }
 
+static void mt_cal_band_reply_completion_test(struct kunit *test)
+{
+	struct mt7932_cal_completion state = {};
+	u8 request[16] = {}, reply[20] = {};
+	unsigned int band, i, expected;
+
+	reply[3] = 1;
+	for (band = 0; band < 2; band++) {
+		memset(&state, 0, sizeof(state));
+		put_unaligned_le32(band, request + 8);
+		expected = band ? 3 : 4;
+		KUNIT_ASSERT_EQ(test, mt7932_cal_begin(&state,
+			mt7932_cal_request_replies(request)), 0);
+		/* The actual D6 completion machine must finish on the final
+		 * band-specific reply, not time out waiting for a fourth 5 GHz reply.
+		 */
+		for (i = 0; i < expected; i++) {
+			KUNIT_EXPECT_EQ(test, mt7932_cal_null(&state, reply,
+				 sizeof(reply), 12), i + 1 == expected ? 1 : 0);
+			KUNIT_EXPECT_EQ(test, state.done, i + 1 == expected);
+		}
+		KUNIT_EXPECT_FALSE(test, state.active);
+	}
+}
+
 static struct kunit_case mt_rf_test_cases[] = {
+	KUNIT_CASE(mt_cal_band_reply_completion_test),
 	KUNIT_CASE(mt_rf_failure_wakes_association_test),
 	KUNIT_CASE(mt_rf_failure_blocks_startup_test),
 	KUNIT_CASE(mt_rf_failure_preserves_first_error_test),
