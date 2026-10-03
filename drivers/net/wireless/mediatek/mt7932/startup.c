@@ -299,7 +299,7 @@ static void mt_startup_work(struct work_struct *work)
 		if (!ret) {
 			ret = mt7932_policy_parse(&policy, file->data, file->size, reg.domain);
 			if (ret)
-				dev_err(&m->pdev->dev, "local input %s has invalid policy: %d\n", path, ret);
+				dev_err_ratelimited(&m->pdev->dev, "local input %s has invalid policy: %d\n", path, ret);
 		}
 		mutex_lock(&m->command_mutex);
 		if (READ_ONCE(m->stopping) || generation != READ_ONCE(m->reg_generation))
@@ -325,7 +325,7 @@ static void mt_startup_work(struct work_struct *work)
 		if (!ret && generation == m->reg_generation)
 			WRITE_ONCE(m->reg_pending, false);
 		if (ret)
-			dev_warn(&m->pdev->dev, "REGULATORY_BLOCKED: %c%c generation=%u error=%d recovery-required=%u\n",
+			dev_warn_ratelimited(&m->pdev->dev, "REGULATORY_BLOCKED: %c%c generation=%u error=%d recovery-required=%u\n",
 				 reg.alpha2[0], reg.alpha2[1], generation, ret,
 				 m->policy_failed || m->link_failed);
 		else
@@ -419,7 +419,7 @@ static void mt_regulatory_notify(struct wiphy *wiphy, struct regulatory_request 
 	if (READ_ONCE(m->interface_registered))
 		schedule_work(&m->startup_work);
 	spin_unlock_irqrestore(&m->response_lock, irqflags);
-	dev_info(&m->pdev->dev, "REGULATORY_REQUEST: %c%c initiator=%u generation=%u\n",
+	dev_info_ratelimited(&m->pdev->dev, "REGULATORY_REQUEST: %c%c initiator=%u generation=%u\n",
 		 reg.alpha2[0], reg.alpha2[1], request->initiator, m->reg_generation);
 }
 

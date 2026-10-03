@@ -327,7 +327,7 @@ int mt_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 	if (request->wdev != &m->wdev)
 		return -ENODEV;
 	mt_retry_missing_policy(m);
-	dev_info(&m->pdev->dev, "SCAN_REQUEST: channels=%u ssids=%d ies=%zu flags=%08x duration=%u/%u\n",
+	dev_info_ratelimited(&m->pdev->dev, "SCAN_REQUEST: channels=%u ssids=%d ies=%zu flags=%08x duration=%u/%u\n",
 		 request->n_channels, request->n_ssids, request->ie_len, request->flags,
 		 request->duration, request->duration_mandatory);
 	if (!request->n_channels || request->n_channels > 17 || request->ie_len > 600 ||

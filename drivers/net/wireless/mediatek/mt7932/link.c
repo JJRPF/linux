@@ -589,7 +589,7 @@ int mt_connect(struct wiphy *wiphy, struct net_device *netdev,
 		mt_retry_missing_policy(m);
 	if (!mt_rf_allowed(m) || !m->bss_active || netdev != m->netdev)
 		return -EAGAIN;
-	dev_info(&m->pdev->dev, "CONNECT_REQUEST: WPA=%u pairwise-count=%d group=%08x AKM-count=%d PMK-present=%u MFP=%u IE-bytes=%zu\n",
+	dev_info_ratelimited(&m->pdev->dev, "CONNECT_REQUEST: WPA=%u pairwise-count=%d group=%08x AKM-count=%d PMK-present=%u MFP=%u IE-bytes=%zu\n",
 		 params->crypto.wpa_versions, params->crypto.n_ciphers_pairwise, params->crypto.cipher_group,
 		 params->crypto.n_akm_suites, !!params->crypto.psk, params->mfp, params->ie_len);
 	if (!params->ssid_len || params->ssid_len > 32)

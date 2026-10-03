@@ -64,7 +64,7 @@ int mt_request_input(struct mt7932 *m, const struct firmware **fw, const char *n
 	int ret = request_firmware_direct(fw, name, &m->pdev->dev);
 
 	if (ret)
-		dev_err(&m->pdev->dev, "local input %s unavailable: %d\n", name, ret);
+		dev_err_ratelimited(&m->pdev->dev, "local input %s unavailable: %d\n", name, ret);
 	return ret;
 }
 
