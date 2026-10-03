@@ -30,17 +30,14 @@ if [ "$chip" = other ]; then
 	exit 1
 fi
 
-enabled=no
-[ "$(cat "$param" 2>/dev/null)" = Y ] && enabled=yes
+enabled=yes
+[ "$(cat "$param" 2>/dev/null)" = N ] && enabled=no
 # The parameter file only exists once pcie_apple is loaded.
-grep -qE '(^| )pcie_apple\.tunnel_kernel_init=(1|y|Y)( |$)' /proc/cmdline &&
-	enabled=yes
+grep -qE '(^| )pcie_apple\.tunnel_kernel_init=(0|n|N)( |$)' /proc/cmdline &&
+	enabled=no
 if [ "$chip" != t8103 ] && [ "$enabled" = no ]; then
-	say "pcie_apple.tunnel_kernel_init is not enabled, so the tunnel stays off."
-	say "Add pcie_apple.tunnel_kernel_init=1 to the kernel command line and"
-	say "reboot: press 'e' on the boot entry in GRUB for a single boot, or add"
-	say "it to GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub and run"
-	say "'sudo grub-mkconfig -o /boot/grub/grub.cfg'."
+	say "pcie_apple.tunnel_kernel_init=0 is on the kernel command line, so the"
+	say "tunnel stays off. Remove it from the command line and reboot."
 	exit 1
 fi
 

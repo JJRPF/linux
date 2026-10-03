@@ -66,10 +66,10 @@ static int link_up_timeout = 500;
 module_param(link_up_timeout, int, 0644);
 MODULE_PARM_DESC(link_up_timeout, "PCIe link training timeout in milliseconds");
 
-static bool tunnel_kernel_init;
+static bool tunnel_kernel_init = true;
 module_param(tunnel_kernel_init, bool, 0444);
 MODULE_PARM_DESC(tunnel_kernel_init,
-		 "Cold-initialize T600x/T602x PCIe-C ports without an m1n1 handoff (experimental)");
+		 "Cold-initialize T600x/T602x PCIe-C ports without an m1n1 handoff (default: on)");
 
 static const char *const apple_pcie_tunnel_cold_init_machines[] = {
 	"apple,t6000", "apple,t6001", "apple,t6020", "apple,t6021", NULL
@@ -79,11 +79,12 @@ static const char *const apple_pcie_tunnel_cold_init_machines[] = {
  * apple_pcie_tunnel_needs_cold_init() - whether the kernel brings up a port
  * @np: PCIe-C host node
  *
- * No m1n1 performs the PCIe-C preinit handoff on T600x/T602x. With the
- * opt-in parameter the kernel cold-initializes these ports instead. It is a
- * parameter rather than a DT property because m1n1 hands every installed
- * kernel the same DT. The tunnel's DART cannot probe without its tunables,
- * which m1n1 does not provide, so ports whose DART lacks them are refused.
+ * No m1n1 performs the PCIe-C preinit handoff on T600x/T602x, so the kernel
+ * cold-initializes these ports instead; pcie_apple.tunnel_kernel_init=0 turns
+ * that off. It is a parameter rather than a DT property because m1n1 hands
+ * every installed kernel the same DT. The tunnel's DART cannot probe without
+ * its tunables, which m1n1 does not provide, so ports whose DART lacks them
+ * are refused.
  *
  * Unlike "apple,pciec-kernel-init" (t8103), this does not select the t8103
  * power and resume sequences.
