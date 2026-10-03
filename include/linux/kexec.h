@@ -449,6 +449,9 @@ extern struct kimage *kexec_crash_image;
 
 bool kexec_load_permitted(int kexec_image_type);
 
+int kexec_block(void);
+void kexec_unblock(void);
+
 #ifndef kexec_flush_icache_page
 #define kexec_flush_icache_page(page)
 #endif
@@ -540,6 +543,8 @@ static inline void __crash_kexec(struct pt_regs *regs) { }
 static inline void crash_kexec(struct pt_regs *regs) { }
 static inline int kexec_should_crash(struct task_struct *p) { return 0; }
 static inline int kexec_crash_loaded(void) { return 0; }
+static inline int kexec_block(void) { return 0; }
+static inline void kexec_unblock(void) { }
 static inline void *kimage_map_segment(struct kimage *image, int idx)
 { return NULL; }
 static inline void kimage_unmap_segment(void *buffer) { }

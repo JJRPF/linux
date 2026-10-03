@@ -135,7 +135,7 @@ void __noclone __crash_kexec(struct pt_regs *regs)
 	 * sufficient.  But since I reuse the memory...
 	 */
 	if (kexec_trylock()) {
-		if (kexec_crash_image) {
+		if (kexec_crash_image && !kexec_blocked()) {
 			struct pt_regs fixed_regs;
 
 			crash_setup_regs(&fixed_regs, regs);

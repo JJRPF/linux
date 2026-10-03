@@ -382,6 +382,11 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 
 	if (!kexec_trylock())
 		return -EBUSY;
+	if (!(flags & KEXEC_FILE_UNLOAD) && kexec_blocked()) {
+		pr_warn("kexec file load refused: a device retains memory until hardware reset\n");
+		kexec_unlock();
+		return -EBUSY;
+	}
 
 #ifdef CONFIG_CRASH_DUMP
 	if (image_type == KEXEC_TYPE_CRASH) {

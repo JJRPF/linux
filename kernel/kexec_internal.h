@@ -21,6 +21,7 @@ int kimage_is_destination_range(struct kimage *image,
  * "simple" atomic variable that is acquired with a cmpxchg().
  */
 extern atomic_t __kexec_lock;
+bool kexec_blocked(void);
 static inline bool kexec_trylock(void)
 {
 	int old = 0;

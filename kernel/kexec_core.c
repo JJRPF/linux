@@ -51,6 +51,49 @@
 
 atomic_t __kexec_lock = ATOMIC_INIT(0);
 
+/* Acquisition is serialized with load and execution by __kexec_lock. */
+static atomic_t kexec_blockers = ATOMIC_INIT(0);
+
+/**
+ * kexec_block - prevent loading and executing kernels while memory is retained
+ *
+ * Acquire before publishing memory to hardware that cannot be quiesced for
+ * kexec. Existing normal and crash images remain loaded, but cannot execute.
+ * Acquisition is serialized with load and execution, including crash/NMI
+ * execution, and returns -EBUSY if one of those operations is in progress.
+ * Callers must leave hardware untouched on acquisition failure. A successful
+ * acquisition must be paired with kexec_unblock() only after DMA has stopped.
+ *
+ * Return: 0 on success, or -EBUSY if load or execution is in progress.
+ */
+int kexec_block(void)
+{
+	if (!kexec_trylock())
+		return -EBUSY;
+	atomic_inc(&kexec_blockers);
+	kexec_unlock();
+	return 0;
+}
+EXPORT_SYMBOL_GPL(kexec_block);
+
+/**
+ * kexec_unblock - release a successful kexec_block() acquisition
+ *
+ * Only call after the retained memory is no longer accessible by hardware.
+ */
+void kexec_unblock(void)
+{
+	/* Releasing after DMA stops cannot make any transition unsafe. */
+	WARN_ON_ONCE(atomic_dec_if_positive(&kexec_blockers) < 0);
+}
+EXPORT_SYMBOL_GPL(kexec_unblock);
+
+/* All callers hold __kexec_lock, so checking and execution cannot race. */
+bool kexec_blocked(void)
+{
+	return atomic_read(&kexec_blockers) != 0;
+}
+
 /* Flag to indicate we are going to kexec a new kernel */
 bool kexec_in_progress = false;
 
@@ -1141,6 +1184,11 @@ int kernel_kexec(void)
 
 	if (!kexec_trylock())
 		return -EBUSY;
+	if (kexec_blocked()) {
+		pr_warn("kexec refused: a device retains memory until hardware reset\n");
+		kexec_unlock();
+		return -EBUSY;
+	}
 	if (!kexec_image) {
 		error = -EINVAL;
 		goto Unlock;
