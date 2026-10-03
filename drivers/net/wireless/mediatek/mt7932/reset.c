@@ -117,6 +117,7 @@ int mt_function_reset(struct mt7932 *m)
 {
 	struct pci_dev *peer;
 	u16 command;
+	unsigned int attempt;
 	int ret;
 
 	device_lock_assert(&m->pdev->dev);
@@ -128,7 +129,17 @@ int mt_function_reset(struct mt7932 *m)
 	 * Trylock avoids inversion with a concurrent sibling probe/remove; hold
 	 * it across FLR to prevent Bluetooth starting after the admission check.
 	 */
-	if (!device_trylock(&peer->dev)) {
+	/* Absorb short sibling probe/remove contention without ever blocking
+	 * on its lock while owning Wi-Fi's device lock. Live peers still fail
+	 * immediately once their state can be inspected.
+	 */
+	for (attempt = 0; attempt < 25; attempt++) {
+		if (device_trylock(&peer->dev))
+			break;
+		if (attempt != 24)
+			msleep(20);
+	}
+	if (attempt == 25) {
 		ret = -EBUSY;
 		goto put;
 	}

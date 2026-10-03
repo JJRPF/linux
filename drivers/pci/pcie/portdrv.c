@@ -220,8 +220,12 @@ static int get_port_device_capability(struct pci_dev *dev)
 	struct pci_host_bridge *host = pci_find_host_bridge(dev->bus);
 	int services = 0;
 
-	/* A retained hierarchy must not be removed, even with native forcing. */
-	if (!host->no_user_remove && dev->is_pciehp &&
+	/* Retained hosts have no HP service to consume firmware-enabled events. */
+	if (host->no_user_remove) {
+		pcie_capability_clear_word(dev, PCI_EXP_SLTCTL,
+			PCI_EXP_SLTCTL_CCIE | PCI_EXP_SLTCTL_HPIE |
+			PCI_EXP_SLTCTL_DLLSCE);
+	} else if (dev->is_pciehp &&
 	    (pci_pcie_type(dev) == PCI_EXP_TYPE_ROOT_PORT ||
 	     pci_pcie_type(dev) == PCI_EXP_TYPE_DOWNSTREAM) &&
 	    (pcie_ports_native || host->native_pcie_hotplug)) {
