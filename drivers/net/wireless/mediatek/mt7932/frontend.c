@@ -6,7 +6,6 @@ static void mt_scan_timeout_work(struct work_struct *work);
 static int mt_scan_submit_next(struct mt7932 *m);
 static int mt_scan_admit(struct mt7932 *m);
 static int mt_set_bss(struct mt7932 *m, bool active);
-static int mt_net_open(struct net_device *netdev);
 static int mt_net_stop(struct net_device *netdev);
 static void mt_cal_work(struct work_struct *work);
 
@@ -30,7 +29,6 @@ static void mt_scan_finish_work(struct work_struct *work)
 
 	/* Retire the old timer before allowing another request to take ownership. */
 	cancel_delayed_work_sync(&m->scan_timeout_work);
-	mt_retry_missing_policy(m);
 	mutex_lock(&m->command_mutex);
 	spin_lock_irqsave(&m->response_lock, flags);
 	request = m->scan_request;
@@ -388,13 +386,14 @@ static int mt_set_bss(struct mt7932 *m, bool active)
 	return ret;
 }
 
-static int mt_net_open(struct net_device *netdev)
+int mt_net_open(struct net_device *netdev)
 {
 	struct mt7932 *m = *(struct mt7932 **)netdev_priv(netdev);
 	unsigned long flags;
 	int ret = 0;
 
 	mutex_lock(&m->command_mutex);
+	mt_retry_missing_policy(m);
 	spin_lock_irqsave(&m->response_lock, flags);
 	if (m->stopping)
 		ret = -ESHUTDOWN;

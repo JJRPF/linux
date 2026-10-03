@@ -8,10 +8,18 @@ static void mt_rf_test_device_release(struct device *dev)
 	/* The enclosing synthetic PCI device is owned by KUnit. */
 }
 
+static void mt_policy_retry_test_work(struct work_struct *work)
+{
+	struct mt7932 *m = container_of(work, struct mt7932, startup_work);
+
+	m->reg_attempted++;
+}
+
 static void mt_rf_test_cleanup(void *data)
 {
 	struct mt7932 *m = data;
 
+	cancel_work_sync(&m->startup_work);
 	free_netdev(m->netdev);
 	put_device(&m->pdev->dev);
 }
@@ -34,7 +42,8 @@ static int mt_rf_test_init(struct kunit *test)
 		put_device(&m->pdev->dev);
 		return ret;
 	}
-	m->netdev = alloc_etherdev(0);
+	INIT_WORK(&m->startup_work, mt_policy_retry_test_work);
+	m->netdev = alloc_etherdev(sizeof(m));
 	if (!m->netdev) {
 		put_device(&m->pdev->dev);
 		return -ENOMEM;
@@ -42,6 +51,8 @@ static int mt_rf_test_init(struct kunit *test)
 	ret = kunit_add_action_or_reset(test, mt_rf_test_cleanup, m);
 	if (ret)
 		return ret;
+	*(struct mt7932 **)netdev_priv(m->netdev) = m;
+	mutex_init(&m->command_mutex);
 	spin_lock_init(&m->response_lock);
 	spin_lock_init(&m->data_lock);
 	init_completion(&m->cal_response);
@@ -135,7 +146,62 @@ static void mt_cal_band_reply_completion_test(struct kunit *test)
 	}
 }
 
+static void mt_missing_policy_admission_retry_test(struct kunit *test)
+{
+	static const struct cfg80211_ops ops = {};
+	struct mt7932 *m = test->priv;
+	struct cfg80211_scan_request scan = { .wdev = &m->wdev };
+	struct cfg80211_connect_params connect = {};
+	struct wiphy *wiphy;
+	unsigned int entry;
+
+	wiphy = wiphy_new(&ops, sizeof(m));
+	KUNIT_ASSERT_NOT_NULL(test, wiphy);
+	*(struct mt7932 **)wiphy_priv(wiphy) = m;
+	/* Missing policy has not touched hardware. Actual frontend entry points
+	 * must retry that lookup while keeping ordinary RF admission closed.
+	 */
+	m->rf_ready = false;
+	m->reg_pending = true;
+	for (entry = 0; entry < 3; entry++) {
+		m->reg_retryable = true;
+		m->reg_generation = 7;
+		m->reg_attempted = 7;
+		switch (entry) {
+		case 0:
+			KUNIT_EXPECT_EQ(test, mt_net_open(m->netdev), 0);
+			break;
+		case 1:
+			KUNIT_EXPECT_EQ(test, mt_scan(wiphy, &scan), -EOPNOTSUPP);
+			break;
+		default:
+			KUNIT_EXPECT_EQ(test, mt_connect(wiphy, m->netdev, &connect), -EAGAIN);
+			break;
+		}
+		mt_retry_missing_policy(m);
+		flush_work(&m->startup_work);
+		KUNIT_EXPECT_EQ(test, m->reg_generation, 8U);
+		KUNIT_EXPECT_EQ(test, m->reg_attempted, 8U);
+		KUNIT_EXPECT_FALSE(test, m->reg_retryable);
+		KUNIT_EXPECT_TRUE(test, m->reg_pending);
+		KUNIT_EXPECT_FALSE(test, mt_rf_allowed(m));
+	}
+	/* Neither a partial policy SET nor terminal calibration may be replayed. */
+	m->reg_retryable = true;
+	m->policy_failed = true;
+	mt_retry_missing_policy(m);
+	flush_work(&m->startup_work);
+	KUNIT_EXPECT_EQ(test, m->reg_generation, 8U);
+	m->policy_failed = false;
+	mt_rf_test_fail(m, -EPROTO);
+	KUNIT_EXPECT_EQ(test, mt_net_open(m->netdev), -EPROTO);
+	flush_work(&m->startup_work);
+	KUNIT_EXPECT_EQ(test, m->reg_generation, 8U);
+	wiphy_free(wiphy);
+}
+
 static struct kunit_case mt_rf_test_cases[] = {
+	KUNIT_CASE(mt_missing_policy_admission_retry_test),
 	KUNIT_CASE(mt_cal_band_reply_completion_test),
 	KUNIT_CASE(mt_rf_failure_wakes_association_test),
 	KUNIT_CASE(mt_rf_failure_blocks_startup_test),
