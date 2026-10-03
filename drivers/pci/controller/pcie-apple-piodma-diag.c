@@ -126,6 +126,28 @@ static bool apple_piodma_trylock_sleep(unsigned int *flags)
 	return false;
 }
 
+static int apple_piodma_lock_transition(unsigned int *sleep_flags)
+{
+	unsigned int attempt;
+	int ret;
+
+	/* Probe cannot wait on either lock while holding its device lock. */
+	for (attempt = 0; attempt < 50; attempt++) {
+		if (apple_piodma_trylock_sleep(sleep_flags)) {
+			ret = kexec_block();
+			if (!ret)
+				return 0;
+			unlock_system_sleep(*sleep_flags);
+			if (ret != -EBUSY)
+				return ret;
+		}
+		if (attempt != 49)
+			msleep(20);
+	}
+	/* A short-lived loader may not trigger deferred-probe retries. */
+	return -EPROBE_DEFER;
+}
+
 static int apple_piodma_pm_notify(struct notifier_block *nb,
 				  unsigned long action, void *unused)
 {
@@ -597,13 +619,9 @@ int apple_piodma_bootstrap_prime(struct device *supplier, struct pci_dev *root)
 	int ret;
 
 	/* Contention must not consume the one permitted hardware attempt. */
-	if (!apple_piodma_trylock_sleep(&sleep_flags))
-		return -EPROBE_DEFER;
-	ret = kexec_block();
-	if (ret) {
-		unlock_system_sleep(sleep_flags);
-		return ret == -EBUSY ? -EPROBE_DEFER : ret;
-	}
+	ret = apple_piodma_lock_transition(&sleep_flags);
+	if (ret)
+		return ret;
 	/* One hardware attempt, including permanent preflight failures. */
 	if (atomic_cmpxchg(&diag->attempted, 0, 1)) {
 		ret = -EALREADY;
