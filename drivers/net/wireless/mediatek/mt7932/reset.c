@@ -28,7 +28,7 @@ static int mt_reset_identity(struct pci_dev *pdev)
 	return 0;
 }
 
-int mt_function_reset(struct mt7932 *m)
+static int mt_function_reset_locked(struct mt7932 *m)
 {
 	struct pci_dev *pdev = m->pdev;
 	u32 fabric, aer_mask = 0;
@@ -110,5 +110,46 @@ restore_aer:
 		ret = ret ?: -EIO;
 unlock:
 	pci_cfg_access_unlock(pdev);
+	return ret;
+}
+
+int mt_function_reset(struct mt7932 *m)
+{
+	struct pci_dev *peer;
+	u16 command;
+	int ret;
+
+	device_lock_assert(&m->pdev->dev);
+	peer = pci_get_slot(m->pdev->bus, PCI_DEVFN(PCI_SLOT(m->pdev->devfn), 1));
+	if (!peer)
+		return mt_function_reset_locked(m);
+	/* The radio functions may share state beyond PCI's advertised FLR scope.
+	 * No qualified contract permits resetting Wi-Fi while Bluetooth is live.
+	 * Trylock avoids inversion with a concurrent sibling probe/remove; hold
+	 * it across FLR to prevent Bluetooth starting after the admission check.
+	 */
+	if (!device_trylock(&peer->dev)) {
+		ret = -EBUSY;
+		goto put;
+	}
+	if (peer->driver) {
+		ret = -EBUSY;
+		goto unlock;
+	}
+	if (pci_read_config_word(peer, PCI_COMMAND, &command) || command == U16_MAX) {
+		ret = -EIO;
+		goto unlock;
+	}
+	if (command & PCI_COMMAND_MASTER) {
+		ret = -EBUSY;
+		goto unlock;
+	}
+	ret = mt_function_reset_locked(m);
+unlock:
+	device_unlock(&peer->dev);
+put:
+	pci_dev_put(peer);
+	if (ret)
+		dev_warn(&m->pdev->dev, "WIFI_FLR_REFUSED_OR_FAILED: %d; Bluetooth sibling must be idle; DMA ownership retained\n", ret);
 	return ret;
 }
