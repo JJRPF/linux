@@ -99,7 +99,7 @@ impl SepData {
         };
 
         if self.profile.key_store == profile::KeyStore::Variant5 {
-            // T6020's ref-key is bound to the unlocked identity bag.
+            // On variant 5 the ref-key is bound to the unlocked identity bag.
             if let Some(healthy) = self.sks_health_check(c"ref-key create") {
                 let _ = self.sks_send(self.sks_req_change_lock_state(
                     handle,

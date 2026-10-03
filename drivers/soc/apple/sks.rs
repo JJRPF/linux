@@ -332,7 +332,7 @@ impl SepData {
     /// whose capability word sets the IPC header version to `min(word, 2)`,
     /// then `set_env`. Returns false if the key store must stay closed this
     /// boot.
-    /// The T6020 path sends nothing here.
+    /// The variant-5 key store sends nothing here.
     pub(crate) fn sks_init_endpoint(&self) -> bool {
         let profile::KeyStore::Sepos13 {
             cpx_encryption_mode,
@@ -569,8 +569,8 @@ impl SepData {
         if proof.slot() != keybag::Slot::Identity {
             return Err(EINVAL);
         }
-        // The 13.5 (T8103) and T6020 enclaves encode the identity bag
-        // differently; the per-SoC profile carries the field values (see
+        // The 13.5 and variant-5 key stores encode the identity bag
+        // differently; the profile carries the field values (see
         // profile::KeybagCreate). On 13.5 the request is: secret, an empty
         // second blob and the 16-byte identity UUID, nothing after it, decoded
         // as an exact-length message.
@@ -678,8 +678,8 @@ impl SepData {
             self.sks_mark_create_refused(slot, out.reply.status);
             return false;
         };
-        // 13.5 replies with the struct version and the handle alone; the T6020
-        // reply adds a blob.
+        // 13.5 replies with the struct version and the handle alone; the
+        // variant-5 reply adds a blob.
         let reply_min = match self.profile.key_store {
             profile::KeyStore::Sepos13 { .. } => 8,
             profile::KeyStore::Variant5 => 12,

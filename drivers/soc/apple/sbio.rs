@@ -1233,6 +1233,28 @@ impl SepData {
                 self.dev,
                 "Touch ID: the persisted identity keybag did not recover\n"
             );
+            // Only the 13.5 key store records the UUID it generated. An M2
+            // Pro/Max uses it before system firmware 26.3 and variant 5 after.
+            if self.profile.key_store == profile::KeyStore::Variant5
+                && stored.uuid_provenance() == crate::keybag::UuidProvenance::AsGenerated
+            {
+                dev_err!(
+                    self.dev,
+                    "Touch ID: the keybag was made by the 13.5 key store, but this enclave speaks variant 5; if macOS was updated past 26.2, Touch ID needs a new identity keybag and new enrolments\n"
+                );
+            }
+            // Only the variant-5 key store records the UUID read back from
+            // the bag on a warm-registration Mac. Firmware that selects the
+            // 13.5 key store for a bag variant 5 made is worth a report.
+            if matches!(self.profile.key_store, profile::KeyStore::Sepos13 { .. })
+                && self.profile.bootstrap == profile::Bootstrap::WarmRegister
+                && stored.uuid_provenance() == crate::keybag::UuidProvenance::ReadBackFromBag
+            {
+                dev_err!(
+                    self.dev,
+                    "Touch ID: the keybag was made by the variant-5 key store, but this firmware selects the 13.5 one; please report this with the \"M2 Pro/Max on system firmware\" line\n"
+                );
+            }
             diag::keybag(diag::Keybag::Failed);
             EIO
         })?;
