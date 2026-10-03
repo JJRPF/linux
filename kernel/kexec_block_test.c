@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <kunit/test.h>
 #include <linux/errno.h>
+#include <linux/sched.h>
 
 #include "kexec_internal.h"
 
@@ -154,6 +155,8 @@ static void kexec_block_file_load_test(struct kunit *test)
 {
 	int ret;
 
+	if (!current->files)
+		kunit_skip(test, "no file table for safe invalid-fd validation");
 	kexec_test_acquire(test);
 	kexec_test_require_empty_images(test);
 	/* Invalid fds cannot create an image even if the veto regresses. */
